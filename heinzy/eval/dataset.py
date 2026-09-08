@@ -1,52 +1,80 @@
 """
-Unified evaluation dataset schema, loader, and validator.
+QA gold-question dataset: schema, loader, and validator (frozen lean schema).
 
 pre:  a JSONL file, one question row per line, matching the schema below.
 post: load_dataset() returns list[Row] of fully typed objects, or raises
       DatasetError on the first line that does not conform to the schema's
       *shape* (missing/unexpected/forbidden field, wrong JSON type).
       validate_dataset() takes an already-loaded list[Row] and returns every
-      ValidationError found (never raises), covering the *semantic* rules
-      that only make sense once every row is known: id uniqueness,
-      answerable/gold_answer/gold_claims consistency, claim_id uniqueness
-      within a row, non-empty content constraints, enum membership, and
-      question_family_id/experiment_split leakage.
-invariant: this module stores ground truth only. No derived evaluation
-           metric (correctness, completeness, faithfulness, citation
+      ValidationError found (never raises), covering the *content* rules
+      that only make sense given a value (non-empty strings, enum
+      membership) or the whole dataset (id uniqueness,
+      question_family_id/experiment_split leakage).
+invariant: this dataset stores ground truth only. No derived evaluation
+           output (correctness, completeness, faithfulness, citation
            support, evidence coverage/sufficiency, hit@k, MRR, GAS) is a
            field here, and loading a row carrying one of those names fails
            loudly rather than silently dropping it. Row-level gold_evidence
            does not exist either -- evidence provenance lives only inside
-           each gold claim's supporting_sections, each of which now also
-           carries the evidence_quote it was annotated from.
+           each gold claim's supporting_evidence.
+invariant: this is a QA gold-question dataset only. Human response
+           annotation and LLM-as-Judge calibration data live in a separate
+           dataset (not this module) -- no response-annotation field is
+           ever added here.
+
+Schema:
+
+  Row
+    id: str                             unique across the dataset
+    question: str                       non-empty
+    answerable: bool
+    question_type: str                  lookup | application | comparison |
+                                         verification | other
+    question_family_id: str | None      paraphrases of the same target/
+                                         entity + same underlying fact/
+                                         policy share this id
+    policy_unit_id: str | None          broader policy grouping; inspection
+                                         only, never a split constraint
+    experiment_split: str               pilot | confirmatory
+    gold_answer: str | None             non-empty iff answerable
+    gold_claims: list[GoldClaim]        non-empty iff answerable
+    unanswerable_reason: str | None     required iff not answerable:
+                                         wrong_scope | external_information |
+                                         missing_detail | other; null iff
+                                         answerable
+
+  GoldClaim
+    claim_id: str                       unique within its row
+    claim: str                          non-empty
+    supporting_evidence: list[SupportingEvidence]   non-empty
+
+  SupportingEvidence
+    section_id: str                     non-empty
+    evidence_quote: str                 non-empty
 
 Two layers, deliberately kept in one small module rather than a generic
 schema framework:
 
   loading    -- can this JSON line even become a Row/GoldClaim/
-                SupportingSection object. Structural: required keys present,
-                no unexpected or forbidden keys, JSON types match (including
-                that tags/pages are homogeneous lists of str/int). Raises
-                DatasetError immediately, because a malformed shape can't
-                produce a typed object at all.
-  validation -- given a list of successfully loaded Rows, do the cross-row
-                and content-level semantic rules hold (enum membership,
-                non-empty strings, leakage). Returns every violation found
-                so a dataset author sees all problems in one pass instead of
+                SupportingEvidence object. Structural: required keys
+                present, no unexpected or forbidden keys, JSON types match.
+                Raises DatasetError immediately, because a malformed shape
+                can't produce a typed object at all.
+  validation -- given a list of successfully loaded Rows, do the content and
+                cross-row rules hold. Returns every violation found so a
+                dataset author sees all problems in one pass instead of
                 fixing them one crash at a time.
 
+question_family_id groups true paraphrases of the same target/entity and the
+same underlying fact/policy -- this module only validates that such rows
+share an experiment_split (rule 10); it deliberately contains no
+semantic-similarity logic to *decide* what counts as a paraphrase, since
+that's an authoring decision, not a schema constraint.
+
 policy_unit_id is explicitly NOT part of validate_dataset()'s error set
-(rule 8): it is a balance/leakage *inspection* signal for whoever is
-constructing splits, not a hard constraint the loader enforces.
-
-primary_category and tags are annotation/taxonomy fields, independent of
-answerable: a false-presupposition question can still be answerable (the
-handbook may contain enough evidence to correct the premise), so neither
-the loader nor the validator ever infers answerable from them.
-
-reasoning_difficulty is the difficulty of answering GIVEN the necessary
-evidence -- it says nothing about retrieval difficulty, which is a separate,
-unscored concern for this schema.
+(rule 11): it is a broader policy-grouping / cluster-aware-analysis signal
+for whoever is constructing splits, not a hard constraint the loader
+enforces.
 """
 from __future__ import annotations
 
@@ -55,25 +83,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-REASONING_DIFFICULTIES = ("easy", "medium", "hard")
+QUESTION_TYPES = ("lookup", "application", "comparison", "verification", "other")
 EXPERIMENT_SPLITS = ("pilot", "confirmatory")
+UNANSWERABLE_REASONS = ("wrong_scope", "external_information", "missing_detail", "other")
 
 _ROW_REQUIRED_KEYS = {
-    "id", "question", "answerable", "primary_category", "tags",
-    "reasoning_difficulty", "policy_unit_id", "question_family_id",
-    "gold_answer", "gold_claims", "experiment_split",
+    "id", "question", "answerable", "question_type", "question_family_id",
+    "policy_unit_id", "experiment_split", "gold_answer", "gold_claims",
+    "unanswerable_reason",
 }
-_ROW_OPTIONAL_KEYS = {"why"}
-_ROW_ALLOWED_KEYS = _ROW_REQUIRED_KEYS | _ROW_OPTIONAL_KEYS
+# No optional row-level fields in the frozen schema (e.g. "why" was removed).
+_ROW_ALLOWED_KEYS = _ROW_REQUIRED_KEYS
 
-_CLAIM_REQUIRED_KEYS = {"claim_id", "claim", "essential", "supporting_sections"}
-_SECTION_REQUIRED_KEYS = {"section_path", "pages", "evidence_quote"}
+_CLAIM_REQUIRED_KEYS = {"claim_id", "claim", "supporting_evidence"}
+_EVIDENCE_REQUIRED_KEYS = {"section_id", "evidence_quote"}
 
-# Named individually so a stale/derived field produces a message that
-# explains *why* it's rejected, not just "unexpected field". These are the
-# fields rules 9-10 exist to keep out of the dataset.
+# Named individually so a stale/obsolete/derived field produces a message
+# that explains *why* it's rejected, not just "unexpected field".
 _FORBIDDEN_ROW_FIELDS = {
-    "gold_evidence": "evidence provenance lives only in gold_claims[].supporting_sections, not at row level",
+    "gold_evidence": "evidence provenance lives only in gold_claims[].supporting_evidence, not at row level",
     "correctness": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
     "completeness": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
     "faithfulness": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
@@ -81,8 +109,22 @@ _FORBIDDEN_ROW_FIELDS = {
     "evidence_coverage": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
     "evidence_sufficiency": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
     "hit_at_k": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
+    "Hit@K": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
     "mrr": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
+    "MRR": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
     "gas": "derived evaluation metrics are computed by the eval harness and never stored in the dataset",
+    "primary_category": "removed from the frozen schema; category/tag annotation fields do not belong in the QA gold dataset",
+    "tags": "removed from the frozen schema; category/tag annotation fields do not belong in the QA gold dataset",
+    "reasoning_difficulty": "removed from the frozen schema; difficulty is not tracked in the QA gold dataset",
+    "why": "removed from the frozen schema; annotation rationale fields do not belong in the QA gold dataset",
+}
+_FORBIDDEN_CLAIM_FIELDS = {
+    "essential": "removed from the frozen schema; GoldClaim no longer carries an essential/optional flag",
+    "supporting_sections": "renamed to supporting_evidence",
+}
+_FORBIDDEN_EVIDENCE_FIELDS = {
+    "section_path": "renamed to section_id",
+    "pages": "removed from the frozen schema; page numbers are not tracked, use evidence_quote",
 }
 
 
@@ -94,9 +136,8 @@ class DatasetError(ValueError):
 # schema
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
-class SupportingSection:
-    section_path: str
-    pages: list[int]
+class SupportingEvidence:
+    section_id: str
     evidence_quote: str
 
 
@@ -104,8 +145,7 @@ class SupportingSection:
 class GoldClaim:
     claim_id: str
     claim: str
-    essential: bool
-    supporting_sections: list[SupportingSection] = field(default_factory=list)
+    supporting_evidence: list[SupportingEvidence] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -113,15 +153,13 @@ class Row:
     id: str
     question: str
     answerable: bool
-    primary_category: str
-    tags: list[str]
-    reasoning_difficulty: str
-    policy_unit_id: str | None
+    question_type: str
     question_family_id: str | None
+    policy_unit_id: str | None
+    experiment_split: str
     gold_answer: str | None
     gold_claims: list[GoldClaim]
-    experiment_split: str
-    why: str | None = None
+    unanswerable_reason: str | None
 
 
 # --------------------------------------------------------------------------- #
@@ -135,37 +173,39 @@ def _require_type(value: Any, expected_type: type, field_name: str, ctx: str) ->
         )
 
 
-def _parse_section(raw: Any, claim_ctx: str, index: int) -> SupportingSection:
+def _parse_evidence(raw: Any, claim_ctx: str, index: int) -> SupportingEvidence:
     if not isinstance(raw, dict):
         raise DatasetError(
-            f"{claim_ctx}: supporting_sections[{index}] must be an object, "
+            f"{claim_ctx}: supporting_evidence[{index}] must be an object, "
             f"got {type(raw).__name__}"
         )
-    missing = _SECTION_REQUIRED_KEYS - raw.keys()
+    missing = _EVIDENCE_REQUIRED_KEYS - raw.keys()
     if missing:
         raise DatasetError(
-            f"{claim_ctx}: supporting_sections[{index}] missing required "
+            f"{claim_ctx}: supporting_evidence[{index}] missing required "
             f"field(s): {sorted(missing)}"
         )
-    unexpected = raw.keys() - _SECTION_REQUIRED_KEYS
+    forbidden_present = [k for k in _FORBIDDEN_EVIDENCE_FIELDS if k in raw]
+    if forbidden_present:
+        details = "; ".join(
+            f"{k!r} ({_FORBIDDEN_EVIDENCE_FIELDS[k]})" for k in forbidden_present
+        )
+        raise DatasetError(
+            f"{claim_ctx}: supporting_evidence[{index}] forbidden field(s) present: {details}"
+        )
+    unexpected = raw.keys() - _EVIDENCE_REQUIRED_KEYS
     if unexpected:
         raise DatasetError(
-            f"{claim_ctx}: supporting_sections[{index}] unexpected "
+            f"{claim_ctx}: supporting_evidence[{index}] unexpected "
             f"field(s): {sorted(unexpected)}"
         )
 
-    section_ctx = f"{claim_ctx} supporting_sections[{index}]"
-    _require_type(raw["section_path"], str, "section_path", section_ctx)
-    _require_type(raw["pages"], list, "pages", section_ctx)
-    for page in raw["pages"]:
-        if not isinstance(page, int) or isinstance(page, bool):
-            raise DatasetError(f"{section_ctx}: pages must be a list of int, found {page!r}")
-    _require_type(raw["evidence_quote"], str, "evidence_quote", section_ctx)
+    evidence_ctx = f"{claim_ctx} supporting_evidence[{index}]"
+    _require_type(raw["section_id"], str, "section_id", evidence_ctx)
+    _require_type(raw["evidence_quote"], str, "evidence_quote", evidence_ctx)
 
-    return SupportingSection(
-        section_path=raw["section_path"],
-        pages=list(raw["pages"]),
-        evidence_quote=raw["evidence_quote"],
+    return SupportingEvidence(
+        section_id=raw["section_id"], evidence_quote=raw["evidence_quote"]
     )
 
 
@@ -179,6 +219,14 @@ def _parse_claim(raw: Any, row_ctx: str, index: int) -> GoldClaim:
         raise DatasetError(
             f"{row_ctx}: gold_claims[{index}] missing required field(s): {sorted(missing)}"
         )
+    forbidden_present = [k for k in _FORBIDDEN_CLAIM_FIELDS if k in raw]
+    if forbidden_present:
+        details = "; ".join(
+            f"{k!r} ({_FORBIDDEN_CLAIM_FIELDS[k]})" for k in forbidden_present
+        )
+        raise DatasetError(
+            f"{row_ctx}: gold_claims[{index}] forbidden field(s) present: {details}"
+        )
     unexpected = raw.keys() - _CLAIM_REQUIRED_KEYS
     if unexpected:
         raise DatasetError(
@@ -188,18 +236,12 @@ def _parse_claim(raw: Any, row_ctx: str, index: int) -> GoldClaim:
     claim_ctx = f"{row_ctx} gold_claims[{index}]"
     _require_type(raw["claim_id"], str, "claim_id", claim_ctx)
     _require_type(raw["claim"], str, "claim", claim_ctx)
-    _require_type(raw["essential"], bool, "essential", claim_ctx)
-    _require_type(raw["supporting_sections"], list, "supporting_sections", claim_ctx)
+    _require_type(raw["supporting_evidence"], list, "supporting_evidence", claim_ctx)
 
-    sections = [
-        _parse_section(s, claim_ctx, j) for j, s in enumerate(raw["supporting_sections"])
+    evidence = [
+        _parse_evidence(e, claim_ctx, j) for j, e in enumerate(raw["supporting_evidence"])
     ]
-    return GoldClaim(
-        claim_id=raw["claim_id"],
-        claim=raw["claim"],
-        essential=raw["essential"],
-        supporting_sections=sections,
-    )
+    return GoldClaim(claim_id=raw["claim_id"], claim=raw["claim"], supporting_evidence=evidence)
 
 
 def _parse_row(raw: Any, line_no: int) -> Row:
@@ -225,23 +267,17 @@ def _parse_row(raw: Any, line_no: int) -> Row:
     _require_type(raw["id"], str, "id", ctx)
     _require_type(raw["question"], str, "question", ctx)
     _require_type(raw["answerable"], bool, "answerable", ctx)
-    _require_type(raw["primary_category"], str, "primary_category", ctx)
-    _require_type(raw["tags"], list, "tags", ctx)
-    for tag in raw["tags"]:
-        if not isinstance(tag, str):
-            raise DatasetError(f"{ctx}: tags must be a list of str, found {tag!r}")
-    _require_type(raw["reasoning_difficulty"], str, "reasoning_difficulty", ctx)
-    if raw["policy_unit_id"] is not None:
-        _require_type(raw["policy_unit_id"], str, "policy_unit_id", ctx)
+    _require_type(raw["question_type"], str, "question_type", ctx)
     if raw["question_family_id"] is not None:
         _require_type(raw["question_family_id"], str, "question_family_id", ctx)
+    if raw["policy_unit_id"] is not None:
+        _require_type(raw["policy_unit_id"], str, "policy_unit_id", ctx)
+    _require_type(raw["experiment_split"], str, "experiment_split", ctx)
     if raw["gold_answer"] is not None:
         _require_type(raw["gold_answer"], str, "gold_answer", ctx)
     _require_type(raw["gold_claims"], list, "gold_claims", ctx)
-    _require_type(raw["experiment_split"], str, "experiment_split", ctx)
-    why = raw.get("why")
-    if why is not None:
-        _require_type(why, str, "why", ctx)
+    if raw["unanswerable_reason"] is not None:
+        _require_type(raw["unanswerable_reason"], str, "unanswerable_reason", ctx)
 
     claims = [_parse_claim(c, ctx, i) for i, c in enumerate(raw["gold_claims"])]
 
@@ -249,20 +285,18 @@ def _parse_row(raw: Any, line_no: int) -> Row:
         id=raw["id"],
         question=raw["question"],
         answerable=raw["answerable"],
-        primary_category=raw["primary_category"],
-        tags=list(raw["tags"]),
-        reasoning_difficulty=raw["reasoning_difficulty"],
-        policy_unit_id=raw["policy_unit_id"],
+        question_type=raw["question_type"],
         question_family_id=raw["question_family_id"],
+        policy_unit_id=raw["policy_unit_id"],
+        experiment_split=raw["experiment_split"],
         gold_answer=raw["gold_answer"],
         gold_claims=claims,
-        experiment_split=raw["experiment_split"],
-        why=why,
+        unanswerable_reason=raw["unanswerable_reason"],
     )
 
 
 def load_dataset(path: str | Path) -> list[Row]:
-    """Read a JSONL eval dataset into typed Row objects.
+    """Read a JSONL QA gold dataset into typed Row objects.
 
     Raises DatasetError on the first line whose JSON shape does not conform
     to the schema (missing/unexpected/forbidden field, wrong JSON type).
@@ -297,15 +331,14 @@ class ValidationError:
 
 
 def validate_dataset(rows: list[Row]) -> list[ValidationError]:
-    """Check the semantic rules that require seeing the whole dataset or a
-    row's content (as opposed to its raw JSON shape, which load_dataset
-    already enforced).
+    """Check the content and cross-row rules load_dataset() cannot check on
+    its own (it only knows a single line's raw JSON shape).
 
     Returns every violation found; never raises.
     """
     errors: list[ValidationError] = []
 
-    # Rule 1: id must be unique.
+    # Rule 1: id must be unique across rows.
     ids_seen: dict[str, int] = {}
     for r in rows:
         ids_seen[r.id] = ids_seen.get(r.id, 0) + 1
@@ -316,24 +349,22 @@ def validate_dataset(rows: list[Row]) -> list[ValidationError]:
             )
 
     for r in rows:
-        # primary_category must be a non-empty string.
-        if not r.primary_category.strip():
+        # Rule 2: question must be a non-empty string.
+        if not r.question.strip():
+            errors.append(
+                ValidationError(r.id, "question_non_empty", "question must be a non-empty string")
+            )
+
+        # Rule 3: question_type enum.
+        if r.question_type not in QUESTION_TYPES:
             errors.append(
                 ValidationError(
-                    r.id, "primary_category_non_empty",
-                    "primary_category must be a non-empty string",
+                    r.id, "question_type_enum",
+                    f"question_type {r.question_type!r} not in {list(QUESTION_TYPES)}",
                 )
             )
 
-        # reasoning_difficulty / experiment_split enums.
-        if r.reasoning_difficulty not in REASONING_DIFFICULTIES:
-            errors.append(
-                ValidationError(
-                    r.id, "reasoning_difficulty_enum",
-                    f"reasoning_difficulty {r.reasoning_difficulty!r} not in "
-                    f"{list(REASONING_DIFFICULTIES)}",
-                )
-            )
+        # Rule 4: experiment_split enum.
         if r.experiment_split not in EXPERIMENT_SPLITS:
             errors.append(
                 ValidationError(
@@ -342,26 +373,8 @@ def validate_dataset(rows: list[Row]) -> list[ValidationError]:
                 )
             )
 
-        # Rules 2 & 3: answerable <-> gold_answer/gold_claims consistency.
-        # Independent of primary_category/tags on purpose -- a
-        # false-presupposition (or any other) category never implies
-        # answerable one way or the other.
-        if r.answerable is False:
-            if r.gold_answer is not None:
-                errors.append(
-                    ValidationError(
-                        r.id, "unanswerable_gold_answer",
-                        "answerable=false requires gold_answer to be null",
-                    )
-                )
-            if r.gold_claims:
-                errors.append(
-                    ValidationError(
-                        r.id, "unanswerable_gold_claims",
-                        "answerable=false requires gold_claims to be empty",
-                    )
-                )
-        else:
+        # Rules 5 & 6: answerable <-> gold_answer/gold_claims/unanswerable_reason.
+        if r.answerable:
             if r.gold_answer is None or not r.gold_answer.strip():
                 errors.append(
                     ValidationError(
@@ -376,8 +389,38 @@ def validate_dataset(rows: list[Row]) -> list[ValidationError]:
                         "answerable=true requires at least one gold_claim",
                     )
                 )
+            if r.unanswerable_reason is not None:
+                errors.append(
+                    ValidationError(
+                        r.id, "answerable_unanswerable_reason",
+                        "answerable=true requires unanswerable_reason to be null",
+                    )
+                )
+        else:
+            if r.gold_answer is not None:
+                errors.append(
+                    ValidationError(
+                        r.id, "unanswerable_gold_answer",
+                        "answerable=false requires gold_answer to be null",
+                    )
+                )
+            if r.gold_claims:
+                errors.append(
+                    ValidationError(
+                        r.id, "unanswerable_gold_claims",
+                        "answerable=false requires gold_claims to be empty",
+                    )
+                )
+            if r.unanswerable_reason is None or r.unanswerable_reason not in UNANSWERABLE_REASONS:
+                errors.append(
+                    ValidationError(
+                        r.id, "unanswerable_reason_required",
+                        "answerable=false requires unanswerable_reason to be one of "
+                        f"{list(UNANSWERABLE_REASONS)}, got {r.unanswerable_reason!r}",
+                    )
+                )
 
-        # Rule 4: claim_id unique within a row.
+        # Rule 7: claim_id unique within a row.
         claim_ids = [c.claim_id for c in r.gold_claims]
         dupes = sorted({cid for cid in claim_ids if claim_ids.count(cid) > 1})
         for cid in dupes:
@@ -388,28 +431,44 @@ def validate_dataset(rows: list[Row]) -> list[ValidationError]:
                 )
             )
 
-        # Rule 5 + evidence_quote content check, both scoped to answerable
-        # rows' claims (unanswerable rows have no gold_claims at all).
-        if r.answerable:
-            for c in r.gold_claims:
-                if not c.supporting_sections:
+        # Rule 8 (claim non-empty) and rule 9 (supporting_evidence content),
+        # plus "every claim needs >=1 supporting_evidence". Checked for
+        # whatever claims are present, independent of answerable, so a
+        # malformed row surfaces every problem it has, not just the first.
+        for c in r.gold_claims:
+            if not c.claim.strip():
+                errors.append(
+                    ValidationError(
+                        r.id, "claim_non_empty",
+                        f"claim {c.claim_id!r} has an empty claim string",
+                    )
+                )
+            if not c.supporting_evidence:
+                errors.append(
+                    ValidationError(
+                        r.id, "claim_supporting_evidence",
+                        f"claim {c.claim_id!r} has no supporting_evidence",
+                    )
+                )
+            for ev in c.supporting_evidence:
+                if not ev.section_id.strip():
                     errors.append(
                         ValidationError(
-                            r.id, "claim_supporting_sections",
-                            f"claim {c.claim_id!r} has no supporting_sections",
+                            r.id, "evidence_section_id_non_empty",
+                            f"claim {c.claim_id!r} has a supporting_evidence entry "
+                            "with an empty section_id",
                         )
                     )
-                for s in c.supporting_sections:
-                    if not s.evidence_quote.strip():
-                        errors.append(
-                            ValidationError(
-                                r.id, "claim_evidence_quote",
-                                f"claim {c.claim_id!r} has a supporting_section "
-                                f"({s.section_path!r}) with an empty evidence_quote",
-                            )
+                if not ev.evidence_quote.strip():
+                    errors.append(
+                        ValidationError(
+                            r.id, "evidence_quote_non_empty",
+                            f"claim {c.claim_id!r} has a supporting_evidence entry "
+                            f"({ev.section_id!r}) with an empty evidence_quote",
                         )
+                    )
 
-    # Rule 7: rows sharing question_family_id must share an experiment_split.
+    # Rule 10: rows sharing question_family_id must share an experiment_split.
     family_splits: dict[str, set[str]] = {}
     for r in rows:
         if r.question_family_id is None:
@@ -431,10 +490,11 @@ def validate_dataset(rows: list[Row]) -> list[ValidationError]:
 def policy_unit_split_map(rows: list[Row]) -> dict[str, set[str]]:
     """policy_unit_id -> set of experiment_splits it appears in.
 
-    Rule 8: policy_unit_id is NOT a hard split constraint, so this never
+    Rule 11: policy_unit_id is NOT a hard split constraint, so this never
     produces a ValidationError. It exists purely so a human constructing or
-    reviewing splits can inspect policy-level balance/leakage, e.g. flag a
-    policy_unit_id that appears in both pilot and confirmatory.
+    reviewing splits can inspect policy-level balance/leakage for broader
+    cluster-aware analysis, e.g. flag a policy_unit_id that appears in both
+    pilot and confirmatory.
     """
     out: dict[str, set[str]] = {}
     for r in rows:
