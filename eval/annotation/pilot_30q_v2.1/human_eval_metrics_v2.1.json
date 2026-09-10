@@ -1,0 +1,333 @@
+{
+  "generation_dataset_version": "v1.0",
+  "evaluation_gold_version": "v1.1",
+  "gold_revision_note": "q007 gold_answer/gold_claims revised in v1.1; generation was not rerun (see gold_revision_log.md)",
+  "human_annotation_provenance": {
+    "control_labels_source": "eval/annotation/pilot_30q/annotation_workbook_human_reviewed_v1.xlsx (all 30 questions, unchanged across runs)",
+    "v1_treatment_labels_source": "eval/annotation/pilot_30q/annotation_workbook_human_reviewed_v1.xlsx (all 30 questions)",
+    "v21_treatment_labels_source": {
+      "reused_from_v1_treatment": [
+        "q001",
+        "q002",
+        "q003",
+        "q004",
+        "q005",
+        "q006",
+        "q009",
+        "q010",
+        "q011",
+        "q012",
+        "q013",
+        "q014",
+        "q015",
+        "q016",
+        "q017",
+        "q018",
+        "q020",
+        "q021",
+        "q024",
+        "q025",
+        "q026",
+        "q028",
+        "q029"
+      ],
+      "newly_reviewed": [
+        "q007",
+        "q008",
+        "q019",
+        "q022",
+        "q023",
+        "q027",
+        "q030"
+      ],
+      "newly_reviewed_source_file": "eval/annotation/pilot_30q_v2.1/treatment_changed_rows_human_reviewed_v2.1.xlsx"
+    },
+    "reused_treatment_row_count": 23,
+    "newly_reviewed_treatment_row_count": 7
+  },
+  "answerable_N": 25,
+  "unanswerable_N": 5,
+  "metrics": {
+    "answerable": {
+      "Control": {
+        "Task Completion": {
+          "PASS": 23,
+          "FAIL": 2,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.92
+        },
+        "Correctness": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Completeness": {
+          "PASS": 18,
+          "FAIL": 7,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.72
+        },
+        "Faithfulness": {
+          "PASS": 23,
+          "FAIL": 0,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Citation Validity": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Citation Support": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Final GAS": {
+          "PASS": 17,
+          "FAIL": 8,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.68
+        }
+      },
+      "v1_Treatment": {
+        "Task Completion": {
+          "PASS": 23,
+          "FAIL": 2,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.92
+        },
+        "Correctness": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Completeness": {
+          "PASS": 19,
+          "FAIL": 6,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.76
+        },
+        "Faithfulness": {
+          "PASS": 23,
+          "FAIL": 0,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Citation Validity": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Citation Support": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Final GAS": {
+          "PASS": 18,
+          "FAIL": 7,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.72
+        }
+      },
+      "v2.1_Treatment": {
+        "Task Completion": {
+          "PASS": 23,
+          "FAIL": 2,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.92
+        },
+        "Correctness": {
+          "PASS": 23,
+          "FAIL": 0,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Completeness": {
+          "PASS": 21,
+          "FAIL": 4,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.84
+        },
+        "Faithfulness": {
+          "PASS": 23,
+          "FAIL": 0,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Citation Validity": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Citation Support": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Final GAS": {
+          "PASS": 20,
+          "FAIL": 5,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.8
+        }
+      }
+    },
+    "unanswerable": {
+      "Control": {
+        "Correct Abstention": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Unsupported Answer": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        }
+      },
+      "v1_Treatment": {
+        "Correct Abstention": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Unsupported Answer": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        }
+      },
+      "v2.1_Treatment": {
+        "Correct Abstention": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Unsupported Answer": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        }
+      }
+    }
+  },
+  "paired_gas_transitions": {
+    "control_to_v1_treatment": {
+      "PASS_to_PASS": [
+        "q001",
+        "q003",
+        "q005",
+        "q006",
+        "q011",
+        "q012",
+        "q014",
+        "q015",
+        "q016",
+        "q017",
+        "q018",
+        "q020",
+        "q022",
+        "q023",
+        "q024",
+        "q026",
+        "q027"
+      ],
+      "FAIL_to_FAIL": [
+        "q002",
+        "q004",
+        "q007",
+        "q013",
+        "q019",
+        "q021",
+        "q025"
+      ],
+      "FAIL_to_PASS": [
+        "q010"
+      ],
+      "PASS_to_FAIL": []
+    },
+    "control_to_v21_treatment": {
+      "PASS_to_PASS": [
+        "q001",
+        "q003",
+        "q005",
+        "q006",
+        "q011",
+        "q012",
+        "q014",
+        "q015",
+        "q016",
+        "q017",
+        "q018",
+        "q020",
+        "q022",
+        "q023",
+        "q024",
+        "q026",
+        "q027"
+      ],
+      "FAIL_to_FAIL": [
+        "q002",
+        "q004",
+        "q013",
+        "q021",
+        "q025"
+      ],
+      "FAIL_to_PASS": [
+        "q007",
+        "q010",
+        "q019"
+      ],
+      "PASS_to_FAIL": []
+    }
+  },
+  "notes": [
+    "No LLM-as-a-Judge was used to produce any label in this file.",
+    "No statistical significance testing was performed.",
+    "No ship/adopt recommendation is made in this file.",
+    "All labels are copied verbatim from human-reviewed source workbooks; none were invented, inferred, or regenerated."
+  ]
+}
