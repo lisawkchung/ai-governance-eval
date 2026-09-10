@@ -150,6 +150,11 @@ class Answer:
     # Which Layer 1 engine decided, builtin or agt. Stamped so a run's audit
     # trail says whether the policy engine was actually in the loop.
     policy_engine: str | None = None
+    # Best-effort provider token usage for the single chat call that produced
+    # `text`. None when no call was made (Layer 1 refusal) or when the
+    # provider response didn't report it -- see extract_usage() below for
+    # exactly which raw response fields this comes from per provider.
+    usage: dict[str, int | None] | None = None
 
     @property
     def is_grounded(self) -> bool:
@@ -158,6 +163,37 @@ class Answer:
         A refusal is trivially grounded, since it makes no claims at all.
         """
         return not self.unsupported_citations
+
+
+def extract_usage(provider: str, data: dict[str, Any]) -> dict[str, int | None]:
+    """Best-effort token usage from a raw provider chat response.
+
+    Ollama's /api/chat response carries prompt_eval_count/eval_count at the
+    top level (_chat_ollama below returns resp.json() directly). Azure/
+    OpenAI-compatible chat completions carry a "usage" object inside the raw
+    response body (_chat_azure returns {"message": ..., "raw": data}). Any
+    field the provider response does not actually contain comes back as
+    None -- usage is never invented, per experiment provenance requirements.
+    """
+    if provider == "azure_openai":
+        usage = (data.get("raw") or {}).get("usage") or {}
+        return {
+            "input_tokens": usage.get("prompt_tokens"),
+            "output_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+        }
+    input_tokens = data.get("prompt_eval_count")
+    output_tokens = data.get("eval_count")
+    total_tokens = (
+        input_tokens + output_tokens
+        if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+        else None
+    )
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
 
 
 class Generator:
@@ -439,6 +475,7 @@ class Generator:
         )
         user_prompt = f"Handbook excerpts:\n\n{context}\n\nQuestion: {query}"
 
+        usage: dict[str, int | None] | None = None
         if self.use_tools:
             raw, tool_events, paused = self._generate_with_tools(query, user_prompt, hits)
             if paused is not None:
@@ -453,6 +490,7 @@ class Generator:
             )
             raw = data["message"]["content"]
             tool_events = []
+            usage = extract_usage(self.provider, data)
 
         # Layer 2 lives in heinzy/generation/abstain.py. It answers a question
         # no policy engine can, which is whether the excerpts actually contain
@@ -460,7 +498,7 @@ class Generator:
         if detects_refusal(raw, self.sentinel):
             return self._refusal(
                 query, hits, REASON_INSUFFICIENT, raw_text=raw,
-                policy_engine=decision.engine, tool_events=tool_events,
+                policy_engine=decision.engine, tool_events=tool_events, usage=usage,
             )
 
         cited = extract_citations(raw)
@@ -480,6 +518,7 @@ class Generator:
             unsupported_citations=unsupported,
             policy_engine=decision.engine,
             tool_events=tool_events,
+            usage=usage,
         )
 
     def _generate_with_tools(
@@ -568,6 +607,7 @@ class Generator:
         raw_text: str | None = None,
         policy_engine: str | None = None,
         tool_events: list[dict[str, Any]] | None = None,
+        usage: dict[str, int | None] | None = None,
     ) -> Answer:
         return Answer(
             query=query,
@@ -579,4 +619,5 @@ class Generator:
             raw_text=raw_text,
             policy_engine=policy_engine,
             tool_events=tool_events or [],
+            usage=usage,
         )
