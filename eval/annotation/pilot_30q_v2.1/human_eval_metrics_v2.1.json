@@ -1,7 +1,7 @@
 {
   "generation_dataset_version": "v1.0",
-  "evaluation_gold_version": "v1.1",
-  "gold_revision_note": "q007 gold_answer/gold_claims revised in v1.1; generation was not rerun (see gold_revision_log.md)",
+  "evaluation_gold_version": "v1.2",
+  "gold_revision_note": "q007 gold_answer/gold_claims revised in v1.1; q027 gold_answer/gold_claims revised in v1.2 (formalizing the pre-existing human-label PASS interpretation, a gold-consistency correction with no metric impact); generation was not rerun for either revision (see gold_revision_log.md)",
   "human_annotation_provenance": {
     "control_labels_source": "eval/annotation/pilot_30q/annotation_workbook_human_reviewed_v1.xlsx (all 30 questions, unchanged across runs)",
     "v1_treatment_labels_source": "eval/annotation/pilot_30q/annotation_workbook_human_reviewed_v1.xlsx (all 30 questions)",

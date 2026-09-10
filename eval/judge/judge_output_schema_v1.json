@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "heinzy-judge-output-schema-v1",
+  "description": "DESIGN ONLY. Not yet used by any judge runner. Two top-level schemas: answerable_schema (used when the gold row's answerable=true) and unanswerable_schema (used when answerable=false). The caller selects which schema/prompt variant applies from the gold dataset, never from the response itself. Final GAS and Citation Validity are intentionally absent from both -- they are computed downstream, never by the LLM. See judge_rubric_v1.md for full semantics.",
+  "$defs": {
+    "semantic_label_answerable_no_na": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "REVIEW_REQUIRED"],
+      "description": "Used for axes that have no natural N/A state: Task Completion, Completeness, Correct Abstention, Unsupported Answer."
+    },
+    "semantic_label_with_na": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "N/A", "REVIEW_REQUIRED"],
+      "description": "Used for axes where 'no material claim is made' is a valid outcome: Correctness, Faithfulness, Citation Support."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Concise, evidence-based rationale. Bounded to discourage verbose, unfalsifiable reasoning. Must reference the specific claim/evidence that drove the label, not a generic restatement of the definition."
+    },
+    "claim_list": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Empty array (never omitted, never null) when there is nothing to list."
+    }
+  },
+  "answerable_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Heinzy Judge Output — Answerable Row",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["task_completion", "correctness", "completeness", "faithfulness", "citation_support"],
+    "properties": {
+      "task_completion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "reason"],
+        "properties": {
+          "label": {"$ref": "#/$defs/semantic_label_answerable_no_na"},
+          "reason": {"$ref": "#/$defs/reason"}
+        }
+      },
+      "correctness": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "unverifiable_claims", "reason"],
+        "properties": {
+          "label": {"$ref": "#/$defs/semantic_label_with_na"},
+          "unverifiable_claims": {
+            "$ref": "#/$defs/claim_list",
+            "description": "Material claims that drove a REVIEW_REQUIRED label because the supplied gold/supporting_evidence could not verify or contradict them. Empty for any other label."
+          },
+          "reason": {"$ref": "#/$defs/reason"}
+        }
+      },
+      "completeness": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "missing_claims", "rubric_or_gold_conflict", "reason"],
+        "properties": {
+          "label": {"$ref": "#/$defs/semantic_label_answerable_no_na"},
+          "missing_claims": {
+            "$ref": "#/$defs/claim_list",
+            "description": "gold_claims entries judged missing or incorrectly conveyed. Empty for PASS."
+          },
+          "rubric_or_gold_conflict": {
+            "type": "boolean",
+            "description": "true iff the judge suspects a gold_claims entry is not actually necessary for a minimally complete answer to this specific question, or that gold_claims is otherwise internally inconsistent for this question. When true, label MUST be REVIEW_REQUIRED -- the judge never resolves this conflict autonomously (see judge_rubric_v1.md section 4 and section 11, Conflict 1)."
+          },
+          "reason": {"$ref": "#/$defs/reason"}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"rubric_or_gold_conflict": {"const": true}}},
+            "then": {"properties": {"label": {"const": "REVIEW_REQUIRED"}}}
+          }
+        ]
+      },
+      "faithfulness": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "unsupported_claims", "reason"],
+        "properties": {
+          "label": {"$ref": "#/$defs/semantic_label_with_na"},
+          "unsupported_claims": {
+            "$ref": "#/$defs/claim_list",
+            "description": "Material claims (including unsupported exclusivity/prohibition/universality inferences) not supported by retrieved_context. Empty for PASS/N/A."
+          },
+          "reason": {"$ref": "#/$defs/reason"}
+        }
+      },
+      "citation_support": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "unsupported_or_uncited_claims", "reason"],
+        "properties": {
+          "label": {"$ref": "#/$defs/semantic_label_with_na"},
+          "unsupported_or_uncited_claims": {
+            "$ref": "#/$defs/claim_list",
+            "description": "Material claims that are uncited, whose citation does not support them, whose citation covers only part of the claim, or whose citation is misattributed. Empty for PASS/N/A."
+          },
+          "reason": {"$ref": "#/$defs/reason"}
+        }
+      }
+    },
+    "not": {
+      "anyOf": [
+        {"required": ["final_gas"]},
+        {"required": ["citation_validity"]},
+        {"required": ["gas"]},
+        {"required": ["GAS"]}
+      ]
+    }
+  },
+  "unanswerable_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Heinzy Judge Output — Unanswerable Row",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["correct_abstention", "unsupported_answer"],
+    "properties": {
+      "correct_abstention": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "reason"],
+        "properties": {
+          "label": {"$ref": "#/$defs/semantic_label_answerable_no_na"},
+          "reason": {"$ref": "#/$defs/reason"}
+        }
+      },
+      "unsupported_answer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "unsupported_claims", "reason"],
+        "properties": {
+          "label": {"$ref": "#/$defs/semantic_label_answerable_no_na"},
+          "unsupported_claims": {
+            "$ref": "#/$defs/claim_list",
+            "description": "Fabricated/unsupported material claims found. Empty for PASS."
+          },
+          "reason": {"$ref": "#/$defs/reason"}
+        }
+      }
+    },
+    "not": {
+      "anyOf": [
+        {"required": ["final_gas"]},
+        {"required": ["gas"]},
+        {"required": ["GAS"]}
+      ]
+    }
+  },
+  "downstream_non_llm_fields": {
+    "description": "Fields that exist in the FINAL merged evaluation record but are never part of the LLM judge's own output JSON. Documented here for schema completeness and to make the boundary explicit.",
+    "citation_validity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "invalid_citations"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "N/A"],
+          "description": "Computed by the deterministic evaluator defined in judge_rubric_v1.md section 7. Never produced by the LLM. No REVIEW_REQUIRED state -- deterministic evaluators resolve exactly, by construction."
+        },
+        "invalid_citations": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Citation strings that failed exact resolution against the retrieved-context section identifiers actually supplied to this response."
+        }
+      }
+    },
+    "final_gas": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "REVIEW_REQUIRED", "N/A"],
+      "description": "Computed downstream per judge_rubric_v1.md section 10: PASS iff every required component (task_completion, correctness, completeness, faithfulness, citation_support, citation_validity) is PASS; FAIL if any required component is FAIL; REVIEW_REQUIRED if any remaining component is REVIEW_REQUIRED (never silently converted to N/A or excluded); N/A for unanswerable rows. Never guessed by the LLM."
+    }
+  }
+}
