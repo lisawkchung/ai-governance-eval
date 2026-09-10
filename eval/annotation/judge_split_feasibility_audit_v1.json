@@ -1,0 +1,189 @@
+{
+  "audit_scope": "LLM-as-a-Judge calibration split FEASIBILITY audit only. No judge run, no judge prompt written, no human labels or gold data changed, no experiment rerun, no significance testing, no dev/holdout split created or frozen.",
+  "inputs": {
+    "gold": "eval/questions_pilot_v1.1.jsonl",
+    "labels": "eval/annotation/final_human_labels_v2.1.csv",
+    "metrics": "eval/annotation/pilot_30q_v2.1/human_eval_metrics_v2.1.json",
+    "provenance": "eval/annotation/pilot_30q_v2.1/gold_revision_log.md",
+    "n_questions": 30,
+    "n_families": 29,
+    "n_label_rows": 60
+  },
+  "rubric_exposure": {
+    "given_exposed_question_ids": ["q007", "q010", "q019", "q027", "q030"],
+    "given_exposed_families": {
+      "q007": "undergraduate_elective_credit",
+      "q010": "mism_normal_courseload",
+      "q019": "ai_management_demystifying_elective_units",
+      "q027": "bida_capstone_substitution_lean_innovation",
+      "q030": "concentration_declaration_gpa"
+    },
+    "family_forced_additional_exposed_question_ids": {
+      "q001": "shares question_family_id 'mism_normal_courseload' with q010 (given-exposed); q001 and q010 are the ONLY two questions in the entire 30-question pilot that share a family."
+    },
+    "mandatory_exposed_question_ids": ["q001", "q007", "q010", "q019", "q027", "q030"],
+    "mandatory_exposed_families": [
+      "undergraduate_elective_credit",
+      "mism_normal_courseload",
+      "ai_management_demystifying_elective_units",
+      "bida_capstone_substitution_lean_innovation",
+      "concentration_declaration_gpa"
+    ],
+    "candidate_exposed_from_local_provenance": {
+      "q021": {
+        "family": "unit_increase_to_60_cqpa",
+        "evidence": "Human Notes on response_ids R025 (treatment) and R060 (control) use verbatim-identical calibration language: 'Human-reviewed calibration label: this is a pure refusal on an answerable question after retrieval returned no chunks. Task Completion and Completeness fail... Correctness, Faithfulness, Citation Validity, and Citation Support are N/A. Final GAS fails.' This is a GENERAL rule formulated for a class of cases (zero-hit false refusal on an answerable question) and applied identically across q021 and q025 -- evaluation-rule refinement, not routine per-instance grading.",
+        "recommendation": "treat as rubric-development-exposed"
+      },
+      "q025": {
+        "family": "internship_reporting_requirements",
+        "evidence": "Same verbatim calibration rule as q021, on response_ids R016 (treatment) and R035 (control). See q021 evidence.",
+        "recommendation": "treat as rubric-development-exposed"
+      },
+      "q004": {
+        "family": "mism_bida_core_elective_units",
+        "evidence": "Human Notes on R051 (control) and R059 (treatment): 'Draft grade: the answer gives only the MISM-BIDA structure and never provides the MISM 108-core/54-elective side needed for the requested comparison.' This question was also the repeated worked example for the 'retrieval-limited failure' category used to design Verifier Prompt v2 (pattern E in that task) and was independently re-inspected as a named development case in the v1->v2 and v2->v2.1 comparison tasks across this project's history.",
+        "recommendation": "treat as rubric-development-exposed"
+      }
+    },
+    "not_flagged_as_exposed": "The remaining 24 questions with Human Notes (q008, q009, q022, q023 among others) carry only routine, rubric-CONSISTENT annotation rationale (applying already-frozen definitions to a specific case) with no evidence of formulating or revising a general evaluation rule. Per instruction, these are NOT automatically treated as exposed merely because they were human-annotated.",
+    "combined_exposed_if_candidates_honored": ["q001", "q004", "q007", "q010", "q019", "q021", "q025", "q027", "q030"],
+    "combined_exposed_families_if_candidates_honored": 8
+  },
+  "axis_failure_support_audit": {
+    "task_completion": {
+      "PASS": 46, "FAIL": 4, "N/A": 10,
+      "n_unique_question_ids_with_fail": 2,
+      "n_unique_families_with_fail": 2,
+      "fail_question_ids": ["q021", "q025"],
+      "fail_families": ["unit_increase_to_60_cqpa", "internship_reporting_requirements"],
+      "fail_families_mandatory_exposed": false,
+      "fail_families_candidate_exposed": true,
+      "independent_fail_families_if_candidates_honored": 0,
+      "independent_fail_families_if_mandatory_only": 2,
+      "can_validate_independently": "NO if candidate exposure is honored (recommended) -- both fail families trace to the same rubric-development note. MARGINAL (2 thin families, same failure mode: zero-hit false refusal) if only the given mandatory list is honored."
+    },
+    "correctness": {
+      "PASS": 45, "FAIL": 1, "N/A": 14,
+      "n_unique_question_ids_with_fail": 1,
+      "n_unique_families_with_fail": 1,
+      "fail_question_ids": ["q019"],
+      "fail_families": ["ai_management_demystifying_elective_units"],
+      "fail_families_mandatory_exposed": true,
+      "independent_fail_families": 0,
+      "can_validate_independently": "NO -- the only Correctness FAIL in the entire 60-row dataset belongs to a mandatory rubric-exposed family. An independent holdout cannot validate this axis at all."
+    },
+    "completeness": {
+      "PASS": 39, "FAIL": 11, "N/A": 10,
+      "n_unique_question_ids_with_fail": 7,
+      "n_unique_families_with_fail": 7,
+      "fail_question_ids": ["q002", "q004", "q007", "q010", "q019", "q021", "q025"],
+      "fail_families": [
+        "mism_curriculum_requirements", "mism_bida_core_elective_units",
+        "undergraduate_elective_credit", "mism_normal_courseload",
+        "ai_management_demystifying_elective_units", "unit_increase_to_60_cqpa",
+        "internship_reporting_requirements"
+      ],
+      "independent_fail_families_if_candidates_honored": ["mism_curriculum_requirements (q002)"],
+      "independent_fail_family_count_if_candidates_honored": 1,
+      "can_validate_independently": "PARTIALLY / MARGINAL -- only q002 (family mism_curriculum_requirements) is not exposed by any evidence found. A single family cannot simultaneously appear in both judge_dev and holdout, so at most one side ever sees this failure type from a genuinely independent source."
+    },
+    "faithfulness": {
+      "PASS": 46, "FAIL": 0, "N/A": 14,
+      "fail_question_ids": [],
+      "can_validate_independently": "NO -- zero Faithfulness FAIL examples exist anywhere in the 60-row dataset (Control or Treatment, exposed or not). Failure-detection ability for this axis cannot be validated from this dataset at all, regardless of split design."
+    },
+    "citation_validity": {
+      "PASS": 44, "FAIL": 2, "N/A": 14,
+      "n_unique_question_ids_with_fail": 1,
+      "n_unique_families_with_fail": 1,
+      "fail_question_ids": ["q013"],
+      "fail_families": ["bida_transfer_to_mism"],
+      "fail_family_mandatory_exposed": false,
+      "fail_family_candidate_exposed": false,
+      "independent_fail_families": 1,
+      "can_validate_independently": "PARTIALLY / MARGINAL -- exactly one family (q013) carries every Citation Validity FAIL in the dataset, and it is not currently rubric-exposed. But a single family can only be placed on ONE side of a dev/holdout split -- whichever side does not receive it has zero Citation Validity FAIL examples. Described as 'primarily deterministic' in the audit brief, but even a rule-based checker's agreement with human judgment on the boundary case it represents cannot be independently confirmed with only one example."
+    },
+    "citation_support": {
+      "PASS": 44, "FAIL": 2, "N/A": 14,
+      "n_unique_question_ids_with_fail": 1,
+      "n_unique_families_with_fail": 1,
+      "fail_question_ids": ["q013"],
+      "fail_families": ["bida_transfer_to_mism"],
+      "independent_fail_families": 1,
+      "note": "IDENTICAL fail source to Citation Validity (same question, q013). The dataset has never observed a case where Citation Validity and Citation Support fail INDEPENDENTLY of each other (e.g., a valid citation that fails to support its claim, or vice versa) -- these two axes are conceptually distinct but empirically undifferentiated in this pilot.",
+      "can_validate_independently": "PARTIALLY / MARGINAL -- same single-family constraint as Citation Validity, and additionally this pilot cannot demonstrate a judge's ability to tell the two axes apart."
+    },
+    "final_gas": {
+      "PASS": 37, "FAIL": 13, "N/A": 10,
+      "n_unique_question_ids_with_fail": 8,
+      "n_unique_families_with_fail": 8,
+      "fail_question_ids": ["q002", "q004", "q007", "q010", "q013", "q019", "q021", "q025"],
+      "independent_fail_families_if_candidates_honored": ["mism_curriculum_requirements (q002)", "bida_transfer_to_mism (q013)"],
+      "independent_fail_family_count_if_candidates_honored": 2,
+      "can_validate_independently": "PARTIALLY / MARGINAL -- only 2 of 8 GAS-FAIL-carrying families (q002, q013) are independent of rubric exposure, and they represent only 2 of the several distinct underlying failure MODES observed (completeness-gap, citation-mismatch). The false-refusal, scenario-specific-reasoning, and retrieval-limited-comparison failure modes have zero independent representation."
+    },
+    "correct_abstention": {
+      "PASS": 10, "FAIL": 0, "N/A": 50,
+      "can_validate_independently": "NO -- zero FAIL examples exist; all 5 unanswerable questions were correctly abstained in both arms. A judge's ability to CATCH a genuine false-answer-on-unanswerable-question cannot be validated from this dataset at all."
+    },
+    "unsupported_answer": {
+      "PASS": 10, "FAIL": 0, "N/A": 50,
+      "can_validate_independently": "NO -- identical situation to Correct Abstention; zero fabrication examples exist to validate detection against."
+    }
+  },
+  "family_level_audit_summary": {
+    "total_families": 29,
+    "families_with_gt_1_question": {"mism_normal_courseload": ["q001", "q010"]},
+    "mandatory_exposed_families": 5,
+    "mandatory_exposed_questions": 6,
+    "candidate_exposed_families_additional": 3,
+    "candidate_exposed_questions_additional": 3,
+    "combined_exposed_families": 8,
+    "combined_exposed_questions": 9,
+    "clean_unexposed_families_remaining": 21,
+    "clean_unexposed_questions_remaining": 21,
+    "note": "Full per-family detail (question_ids, answerable composition, Control/Treatment GAS, axes with FAIL/N/A) is available in eval/annotation/pilot_30q_v2.1/human_eval_metrics_v2.1.json cross-referenced with eval/annotation/final_human_labels_v2.1.csv; omitted here in full (29 entries) for file size -- see the accompanying .md for the condensed version of families carrying any FAIL signal.",
+    "20_10_headcount_arithmetic": "Numerically possible: 9 mandatory+candidate exposed questions must go to judge_dev; the remaining 21 clean questions can split ~11/10 to reach an approximately 20 dev / 10 holdout total. This is a HEADCOUNT-ONLY feasibility check and does NOT by itself establish that the holdout would contain meaningful failure examples -- see axis_failure_support_audit above."
+  },
+  "feasibility_assessment": {
+    "A_judge_development_feasible": "FEASIBLE. 30 questions x 2 arms = 60 labeled responses, with real (if concentrated) FAIL signal on Task Completion, Completeness, Citation Validity/Support, and Final GAS, plus 17 written human-reviewer rationale notes already documenting rubric interpretation for boundary cases (zero-hit false refusal, scenario-specific reasoning, retrieval-limited comparison, BIDA-exclusivity wording). This is enough raw material to begin drafting and iterating a judge prompt.",
+    "B_independent_holdout_feasible": "PARTIALLY FEASIBLE, headcount only. A ~20/10 split is arithmetically constructible after forcing exposed families into judge_dev, but the holdout's FAILURE-CLASS diversity is severely limited -- see C.",
+    "C_per_axis_failure_validation_feasible": {
+      "task_completion": "NOT FEASIBLE independently once candidate exposure is honored (recommended); MARGINAL (2 thin, same-failure-mode families) otherwise.",
+      "correctness": "NOT FEASIBLE -- zero independent FAIL families.",
+      "completeness": "PARTIALLY FEASIBLE -- exactly 1 independent FAIL family (q002).",
+      "faithfulness": "NOT FEASIBLE -- zero FAIL examples anywhere in the dataset.",
+      "citation_validity": "PARTIALLY FEASIBLE -- exactly 1 independent FAIL family (q013), unable to be on both sides of a split simultaneously.",
+      "citation_support": "PARTIALLY FEASIBLE -- same single family as citation_validity; the two axes have never been empirically differentiated.",
+      "correct_abstention": "NOT FEASIBLE -- zero FAIL examples anywhere.",
+      "unsupported_answer": "NOT FEASIBLE -- zero FAIL examples anywhere."
+    },
+    "D_final_gas_validation_feasible": "PARTIALLY FEASIBLE / THIN. Only 2 of 8 GAS-FAIL-carrying families (q002, q013) are independent of rubric exposure, covering only 2 of the ~5 distinct failure modes observed in this pilot (completeness-gap and citation-mismatch; false-refusal, scenario-specific-reasoning-miss, and retrieval-limited-comparison modes have zero independent representation). A holdout GAS check built from only this pilot would validate agreement on a PASS-heavy, narrow slice of failure modes, not general judge reliability.",
+    "20_10_split_methodologically_defensible": "NOT YET, as a rigorous per-axis failure-detection validation instrument. It would be defensible only as a coarse, PASS-heavy sanity check (does the judge mostly agree with humans on the common case) plus a thin 1-2-family check on completeness and citation-mismatch specifically -- not as evidence the judge reliably detects faithfulness violations, correctness errors, false refusals, or fabricated answers to unanswerable questions, since those axes have no independent failure examples at all.",
+    "overall_conclusion": "PARTIALLY FEASIBLE. Judge DEVELOPMENT is well-supported. Judge HOLDOUT is headcount-feasible but fails to independently validate failure-detection for Correctness, Faithfulness, Correct Abstention, and Unsupported Answer (zero or fully-exposed FAIL examples), and only marginally/thinly supports Task Completion, Completeness, Citation Validity, and Citation Support (0-2 independent families each). Final GAS validation inherits this thinness."
+  },
+  "data_gaps_if_proceeding": {
+    "principle": "New validation examples must come from NEW, independent question families. Generating more response variants for the same exposed (or thinly-independent) families does not create an independent holdout, and the untouched confirmatory dataset is explicitly out of scope until separately approved.",
+    "gaps_by_axis": {
+      "faithfulness": "Need >=2-3 new independent families with a response that asserts a claim NOT supported by its retrieved context -- currently zero exist.",
+      "correctness": "Need >=2-3 new independent families with a genuinely wrong factual claim, distinct from q019's 'range vs. specific value' failure mode.",
+      "task_completion": "Need >=2-3 new independent families demonstrating non-answer/refusal failure through a DIFFERENT mechanism than q021/q025's zero-hit-retrieval false refusal (e.g., an off-topic or evasive answer despite sufficient evidence).",
+      "completeness": "Need >=2-3 more new independent families beyond q002, ideally spanning different omission patterns (missing condition, missing value, missing one side of a comparison).",
+      "citation_validity_vs_support": "Need new independent families that separate the two failure modes: (a) a citation to a section not in the retrieved set (validity failure) with support otherwise fine, and (b) a citation to a real retrieved section that does NOT actually support the attached claim (support failure) -- currently both axes' only evidence (q013) fails on both simultaneously, so the two have never been distinguished.",
+      "correct_abstention_and_unsupported_answer": "Need >=2-3 new independent unanswerable-question families where the system response actually DOES fabricate an answer, to demonstrate the judge can catch that failure rather than only confirm correct abstentions.",
+      "approximate_total_new_independent_families_needed": "8-12, distributed across the gaps above, none overlapping with the 8 already-exposed families or reusing the same underlying policy/retrieval scenario as an existing family."
+    }
+  },
+  "label_gold_consistency_check": {
+    "q007_uses_evaluation_gold_v1.1": true,
+    "generation_dataset_version": "v1.0 (unchanged; confirmed via human_eval_metrics_v2.1.json)",
+    "evaluation_gold_version": "v1.1 (confirmed via human_eval_metrics_v2.1.json)",
+    "q007_control_and_v1_treatment_reconsidered_under_v1.1_gold": true,
+    "q007_control_and_v1_treatment_completeness_gas_remain_fail": "TRUE -- both still omit the B-or-better requirement (q007-c05, retained in v1.1), confirmed directly from eval/annotation/pilot_30q_v2.1/gold_revision_log.md and cross-checked against eval/annotation/final_human_labels_v2.1.csv (q007 Control: completeness=FAIL, final_gas=FAIL).",
+    "q027_correction_reflected_consistently": "TRUE -- both Control and v1 Treatment rows for q027 show Completeness=PASS and Final GAS=PASS in the final label CSV, consistent with the correction notes on response_ids R030 and R040 in the v1 human-reviewed workbook.",
+    "important_distinction": "Changes in aggregate metrics (e.g. Control GAS 68%, v1 Treatment GAS 72%) caused by the q007 gold correction and the q027 label correction are EVALUATION-INSTRUMENT REVISIONS, not model-performance changes. Both corrections were applied identically to whichever arms they touched (q007's gold applies equally to Control and Treatment scoring; q027's label correction was applied to both Control and v1 Treatment), so the CONTROL-vs-TREATMENT comparison itself is not distorted by either correction -- but the ABSOLUTE percentage levels are not comparable to any hypothetical pre-correction baseline, and should not be read as evidence the underlying model or prompt changed."
+  },
+  "split_frozen": false,
+  "confirmation": "No judge_calibration_split_v1.csv or equivalent split file was created. No human label, gold file, or experiment result was modified during this audit."
+}
