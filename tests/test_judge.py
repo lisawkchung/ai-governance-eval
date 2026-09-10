@@ -371,6 +371,28 @@ def test_citation_resolver_never_uses_fuzzy_or_semantic_matching():
     assert res[0].resolution_status == UNRESOLVED
 
 
+def test_q013_style_body_text_citation_with_internal_parens_remains_unresolved():
+    """Regression for the extraction-truncation bug found via q013: even
+    after extraction correctly captures the FULL body-text-as-citation
+    label (including its internal parenthetical), it must still resolve as
+    UNRESOLVED -- it is body text, not a real retrieved section identifier.
+    This is a body-text-as-citation failure case by design (judge_rubric_v1.md
+    section 7), not something exact-match resolution should ever paper over."""
+    full_label = "Students may transfer to the MISM (non-BIDA) program"
+    chunks = [
+        RetrievedSectionChunk(
+            section_path="5. MISM Business Intelligence & Data Analytics (MISM-BIDA) Curriculum",
+            doc_id="d1",
+            text=f"{full_label}. The pre-matriculation transfer deadline is June 1.",
+            rank=1,
+        )
+    ]
+    res = resolve_citations([full_label], chunks)
+    assert res[0].resolution_status == UNRESOLVED
+    assert res[0].raw_citation == full_label  # extraction is complete, not truncated
+    assert res[0].resolved_section_path is None
+
+
 def test_resolved_citation_includes_exact_retrieved_evidence_text():
     chunks = [RetrievedSectionChunk(section_path="8. Units", doc_id="d1", text="EXACT TEXT", rank=1)]
     res = resolve_citations(["8. Units"], chunks)

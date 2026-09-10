@@ -26,12 +26,52 @@ import re
 # construct rather than on any quoted string. Models also quote handbook prose
 # verbatim, and treating those quotes as citations produced false "unsupported"
 # flags.
+#
+# Used only by substantive_word_count() below, which just needs to strip
+# roughly-citation-shaped parentheticals before counting words -- it does not
+# need exact block-boundary correctness. extract_citations() below does NOT
+# use this regex, because [^)] stops at the FIRST ')' in the block, which
+# incorrectly truncates a quoted label that itself contains a parenthetical,
+# e.g. (see "Students may transfer to the MISM (non-BIDA) program") was cut
+# to "Students may transfer to the MISM (non-BIDA" -- see _see_block_end().
 _SEE_BLOCK = re.compile(r"\(\s*see[:\s]\s*([^)]{3,300})\)", re.IGNORECASE)
+
+# extract_citations() uses this anchor plus _see_block_end() (a small
+# deterministic quote-tracking scan, not a regex) to find the TRUE end of a
+# (see ...) block: a ')' encountered while inside a quoted label is part of
+# the label, not the block terminator.
+_SEE_START = re.compile(r"\(\s*see[:\s]\s*", re.IGNORECASE)
+_QUOTE_TOGGLE_CHARS = ('"', "“", "”")  # straight and curly double quotes
 
 # Inside a (see ...) block, split multiple sections: quoted runs first, and if
 # the model dropped the quotes, fall back to comma / "and" separation.
 _QUOTED = re.compile(r'["“]([^"”]{2,150})["”]')
 _SPLIT_UNQUOTED = re.compile(r",|\band\b|;", re.IGNORECASE)
+
+
+def _see_block_end(text: str, start: int, *, window: int = 400) -> int | None:
+    """Return the index of the ')' that closes a (see ...) block starting at
+    `start` (the position right after '(see...'), or None if not found
+    within `window` characters.
+
+    Deterministic quote-boundary tracking, not fuzzy/semantic matching: any
+    of '"'/'“'/'”' toggles whether we are "inside a quoted label";
+    a ')' encountered while inside a quote is part of the label and does NOT
+    terminate the block, so a quoted citation label may itself contain
+    parentheses. A ')' encountered outside any quote terminates the block,
+    exactly as the original [^)] boundary did for the common unquoted case.
+    """
+    in_quote = False
+    limit = min(len(text), start + window)
+    i = start
+    while i < limit:
+        ch = text[i]
+        if ch in _QUOTE_TOGGLE_CHARS:
+            in_quote = not in_quote
+        elif ch == ")" and not in_quote:
+            return i
+        i += 1
+    return None
 
 # Models cite in prose at least as often as they follow the parenthetical
 # format, as in "According to section 7.2, students must...". An extractor
@@ -76,7 +116,12 @@ def extract_citations(text: str) -> list[str]:
     """
     found: list[str] = []
     text = text or ""
-    for block in _SEE_BLOCK.findall(text):
+    for start_match in _SEE_START.finditer(text):
+        block_start = start_match.end()
+        block_end = _see_block_end(text, block_start)
+        if block_end is None:
+            continue
+        block = text[block_start:block_end]
         quoted = _QUOTED.findall(block)
         parts = quoted if quoted else _SPLIT_UNQUOTED.split(block)
         for part in parts:

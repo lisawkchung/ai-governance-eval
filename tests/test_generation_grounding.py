@@ -172,6 +172,62 @@ def test_citation_extraction(text, expected):
     assert extract_citations(text) == expected
 
 
+# --------------------------------------------------------------------------- #
+# Regression: a quoted citation label containing its own parentheses must not
+# be truncated at the inner ')' (discovered via q013 Judge-input inspection:
+# (see "Students may transfer to the MISM (non-BIDA) program") was cut to
+# "Students may transfer to the MISM (non-BIDA"). Fix is deterministic
+# quote-boundary tracking (_see_block_end), never fuzzy/semantic matching.
+# --------------------------------------------------------------------------- #
+def test_normal_quoted_citation_still_extracts_cleanly():
+    assert extract_citations('The plan is on file (see "7. Concentrations").') == [
+        "7. Concentrations"
+    ]
+
+
+def test_quoted_label_containing_parentheses_extracts_entire_label():
+    text = 'Contact your advisor (see "Policy (revised 2024) applies").'
+    assert extract_citations(text) == ["Policy (revised 2024) applies"]
+
+
+def test_q013_body_text_citation_with_internal_parens_is_not_truncated():
+    text = (
+        "Students may transfer to the MISM (non-BIDA) program. The "
+        "pre-matriculation transfer deadline is June 1. The "
+        'post-matriculation transfer deadline is October 15 (see '
+        '"Students may transfer to the MISM (non-BIDA) program").'
+    )
+    cited = extract_citations(text)
+    assert cited == ["Students may transfer to the MISM (non-BIDA) program"]
+    # the historical bug truncated the label right before ") program" --
+    # assert the exact buggy (truncated) string is NOT what was extracted.
+    assert cited != ["Students may transfer to the MISM (non-BIDA"]
+
+
+def test_existing_valid_citation_behavior_is_unchanged():
+    """Locks that the boundary fix didn't alter any previously-correct case:
+    plain quoted citation, multi-citation-in-one-block, and no-citation."""
+    assert extract_citations('See the handbook (see "4.1. Core Courses").') == [
+        "4.1. Core Courses"
+    ]
+    assert extract_citations(
+        'Two sources (see "4.1. Core Courses" and "4.2. Electives").'
+    ) == ["4.1. Core Courses", "4.2. Electives"]
+    assert extract_citations("No citation here at all.") == []
+
+
+def test_extraction_never_resolves_against_a_corpus_it_is_pure_text_pulling():
+    """extract_citations() has no concept of 'valid' or 'resolved' -- it only
+    pulls candidate label text. Resolution (exact-match only, never fuzzy) is
+    a separate concern in heinzy.eval.citation_resolution."""
+    import inspect
+
+    assert "retrieved" not in inspect.signature(extract_citations).parameters
+    assert "context" not in inspect.signature(extract_citations).parameters
+    # a citation to a totally invented section still just extracts as text
+    assert extract_citations('(see "99.9. Invented Section")') == ["99.9. Invented Section"]
+
+
 def test_citation_matches_on_section_leaf_or_full_path():
     paths = ["Handbook > 4. Curriculum > 4.1. Core Courses"]
     assert unsupported_citations(["4.1. Core Courses"], paths) == []
