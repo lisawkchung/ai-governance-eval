@@ -1,0 +1,346 @@
+{
+  "generation_dataset_version": "v1.0",
+  "evaluation_gold_version": "v1.4",
+  "gold_revision_note": "q007 gold_answer/gold_claims revised in v1.1; q027 gold_answer/gold_claims revised in v1.2 (formalizing the pre-existing human-label PASS interpretation, a gold-consistency correction with no metric impact); q012 gold_claims revised in v1.3 (minimum-answer granularity: 2 required claims); q014 gold_claims revised in v1.4 (minimum-answer granularity: question-provided scope satisfies the graduate-level-course qualifier, no metric impact -- q014 human labels unchanged); generation was not rerun for any revision (see gold_revision_log.md)",
+  "human_annotation_provenance": {
+    "control_labels_source": "eval/annotation/pilot_30q/annotation_workbook_human_reviewed_v1.xlsx (all 30 questions, unchanged across runs)",
+    "v1_treatment_labels_source": "eval/annotation/pilot_30q/annotation_workbook_human_reviewed_v1.xlsx (all 30 questions)",
+    "v21_treatment_labels_source": {
+      "reused_from_v1_treatment": [
+        "q001",
+        "q002",
+        "q003",
+        "q004",
+        "q005",
+        "q006",
+        "q009",
+        "q010",
+        "q011",
+        "q012",
+        "q013",
+        "q014",
+        "q015",
+        "q016",
+        "q017",
+        "q018",
+        "q020",
+        "q021",
+        "q024",
+        "q025",
+        "q026",
+        "q028",
+        "q029"
+      ],
+      "newly_reviewed": [
+        "q007",
+        "q008",
+        "q019",
+        "q022",
+        "q023",
+        "q027",
+        "q030"
+      ],
+      "newly_reviewed_source_file": "eval/annotation/pilot_30q_v2.1/treatment_changed_rows_human_reviewed_v2.1.xlsx"
+    },
+    "reused_treatment_row_count": 23,
+    "newly_reviewed_treatment_row_count": 7
+  },
+  "post_hoc_adjudication_corrections": [
+    {
+      "question_id": "q007",
+      "arm": "Treatment",
+      "discovered_during": "Judge (v1.2 gpt-oss:20b) disagreement review",
+      "correction": "Completeness PASS -> FAIL: the response's 'even if you receive a grade of B or better' appears only in the QPA-impact context and does not convey the required condition (q007-c05) that a B-or-better grade is necessary for the undergraduate-course units to count toward the degree.",
+      "final_gas_recomputed": "PASS -> FAIL (deterministic composition: Completeness FAIL forces Final GAS FAIL; all other required components unchanged)",
+      "other_axes_changed": [],
+      "note": "This is a human-label correction discovered during adjudication, NOT Judge-driven relabeling for agreement optimization. q007 gold was NOT changed."
+    }
+  ],
+  "answerable_N": 25,
+  "unanswerable_N": 5,
+  "metrics": {
+    "answerable": {
+      "Control": {
+        "Task Completion": {
+          "PASS": 23,
+          "FAIL": 2,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.92
+        },
+        "Correctness": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Completeness": {
+          "PASS": 18,
+          "FAIL": 7,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.72
+        },
+        "Faithfulness": {
+          "PASS": 23,
+          "FAIL": 0,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Citation Validity": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Citation Support": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Final GAS": {
+          "PASS": 17,
+          "FAIL": 8,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.68
+        }
+      },
+      "v1_Treatment": {
+        "Task Completion": {
+          "PASS": 23,
+          "FAIL": 2,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.92
+        },
+        "Correctness": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Completeness": {
+          "PASS": 19,
+          "FAIL": 6,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.76
+        },
+        "Faithfulness": {
+          "PASS": 23,
+          "FAIL": 0,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Citation Validity": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Citation Support": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Final GAS": {
+          "PASS": 18,
+          "FAIL": 7,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.72
+        }
+      },
+      "v2.1_Treatment": {
+        "Task Completion": {
+          "PASS": 23,
+          "FAIL": 2,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.92
+        },
+        "Correctness": {
+          "PASS": 23,
+          "FAIL": 0,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Completeness": {
+          "PASS": 20,
+          "FAIL": 5,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.8
+        },
+        "Faithfulness": {
+          "PASS": 23,
+          "FAIL": 0,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Citation Validity": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Citation Support": {
+          "PASS": 22,
+          "FAIL": 1,
+          "N/A": 2,
+          "evaluated_N": 23,
+          "pass_rate_over_evaluated": 0.9565
+        },
+        "Final GAS": {
+          "PASS": 19,
+          "FAIL": 6,
+          "N/A": 0,
+          "evaluated_N": 25,
+          "pass_rate_over_evaluated": 0.76
+        }
+      }
+    },
+    "unanswerable": {
+      "Control": {
+        "Correct Abstention": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Unsupported Answer": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        }
+      },
+      "v1_Treatment": {
+        "Correct Abstention": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Unsupported Answer": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        }
+      },
+      "v2.1_Treatment": {
+        "Correct Abstention": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        },
+        "Unsupported Answer": {
+          "PASS": 5,
+          "FAIL": 0,
+          "N/A": 0,
+          "evaluated_N": 5,
+          "pass_rate_over_evaluated": 1.0
+        }
+      }
+    }
+  },
+  "paired_gas_transitions": {
+    "control_to_v1_treatment": {
+      "PASS_to_PASS": [
+        "q001",
+        "q003",
+        "q005",
+        "q006",
+        "q011",
+        "q012",
+        "q014",
+        "q015",
+        "q016",
+        "q017",
+        "q018",
+        "q020",
+        "q022",
+        "q023",
+        "q024",
+        "q026",
+        "q027"
+      ],
+      "FAIL_to_FAIL": [
+        "q002",
+        "q004",
+        "q007",
+        "q013",
+        "q019",
+        "q021",
+        "q025"
+      ],
+      "FAIL_to_PASS": [
+        "q010"
+      ],
+      "PASS_to_FAIL": []
+    },
+    "control_to_v21_treatment": {
+      "PASS_to_PASS": [
+        "q001",
+        "q003",
+        "q005",
+        "q006",
+        "q011",
+        "q012",
+        "q014",
+        "q015",
+        "q016",
+        "q017",
+        "q018",
+        "q020",
+        "q022",
+        "q023",
+        "q024",
+        "q026",
+        "q027"
+      ],
+      "FAIL_to_FAIL": [
+        "q002",
+        "q004",
+        "q007",
+        "q013",
+        "q021",
+        "q025"
+      ],
+      "FAIL_to_PASS": [
+        "q010",
+        "q019"
+      ],
+      "PASS_to_FAIL": []
+    }
+  },
+  "notes": [
+    "No LLM-as-a-Judge was used to produce any label in this file.",
+    "No statistical significance testing was performed.",
+    "No ship/adopt recommendation is made in this file.",
+    "All labels are copied verbatim from human-reviewed source workbooks; none were invented, inferred, or regenerated.",
+    "v2.2 corrects exactly one label (q007 Treatment Completeness/Final GAS) versus v2.1, discovered during Judge disagreement adjudication; see post_hoc_adjudication_corrections above and gold_revision_log.md.",
+    "v1_Treatment metrics/transitions are copied verbatim from v2.1 (a frozen prior labeling round sourced from a workbook not present in this CSV) and are unaffected by this correction."
+  ]
+}

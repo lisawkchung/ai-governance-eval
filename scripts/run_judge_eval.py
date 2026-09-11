@@ -25,10 +25,17 @@ Examples (see also the final report for exact future commands):
         --experiment-result eval/results/pilot_full_30q_v2.1_20260910T011413Z.json \\
         --question-id q001 --inspect
 
-    # real run (NOT executed by this task) -- requires --judge-model
+    # real run (NOT executed by this task) -- requires --judge-model.
+    # --judge-endpoint precedence for provider=ollama: explicit flag >
+    # OLLAMA_HOST env var > http://127.0.0.1:11434 default (never empty).
+    # --judge-think is resolved per judge_model family (see
+    # heinzy.eval.judge.resolve_think_config) -- an unsupported model/think
+    # combination aborts before any HTTP call, not silently.
     python scripts/run_judge_eval.py \\
         --experiment-result eval/results/pilot_full_30q_v2.1_20260910T011413Z.json \\
         --judge-provider ollama --judge-model llama3.2:latest \\
+        --judge-endpoint http://127.0.0.1:11434 \\
+        --temperature 0 --judge-think auto \\
         --require-full-coverage \\
         --output eval/results/judge_v1_dev_60resp_<timestamp>.json
 """
@@ -46,6 +53,7 @@ from heinzy.eval.judge import (
     ARM_CONTROL,
     ARM_TREATMENT,
     DEFAULT_ARMS,
+    THINK_AUTO,
     HTTPJudgeClient,
     JudgeInputError,
     ModelConfig,
@@ -61,6 +69,7 @@ from heinzy.eval.judge import (
     load_judge_prompt_variants,
     load_output_schema,
     render_judge_request,
+    resolve_think_config,
     validate_full_coverage,
 )
 
@@ -100,7 +109,18 @@ def main() -> int:
     ap.add_argument("--judge-provider", default="ollama")
     ap.add_argument("--judge-model", default=None,
                      help="required for a real run; not required for --dry-run/--inspect")
-    ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--judge-endpoint", default=None,
+                     help="explicit Judge model endpoint; for provider=ollama, overrides "
+                          "OLLAMA_HOST and the http://127.0.0.1:11434 default")
+    ap.add_argument("--temperature", type=float, default=0.0,
+                     help="development starting point only (default 0) -- NOT required for "
+                          "Control, NOT a determinism guarantee, NOT necessarily the final "
+                          "tuned value; may be retuned later using development data only")
+    ap.add_argument("--judge-think", default=THINK_AUTO,
+                     choices=["auto", "on", "off", "low", "medium", "high"],
+                     help="Judge reasoning/thinking configuration, resolved per judge_model "
+                          "family (see heinzy.eval.judge.resolve_think_config); an unsupported "
+                          "combination (e.g. a GPT-OSS model + 'off') fails before any HTTP call")
     ap.add_argument("--timeout", type=float, default=None)
     ap.add_argument("--limit", type=int, default=None,
                      help="grade only the first N flattened subjects (after --question-id filtering)")
@@ -123,6 +143,14 @@ def main() -> int:
     ap.add_argument("--rubric", type=Path, default=DEFAULT_RUBRIC)
     ap.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA)
     ap.add_argument("--evaluation-gold-version", default="v1.2")
+    ap.add_argument("--judge-prompt-version", default="v1",
+                     help="version label recorded in provenance for --prompt's content; "
+                          "MUST match what --prompt actually points to (e.g. pass 'v1.1' "
+                          "together with --prompt eval/judge/judge_prompt_v1.1.txt) -- this "
+                          "label is never inferred from the file path")
+    ap.add_argument("--judge-rubric-version", default="v1",
+                     help="version label recorded in provenance for --rubric's content; "
+                          "same caveat as --judge-prompt-version")
     args = ap.parse_args()
 
     if args.inspect:
@@ -200,6 +228,8 @@ def main() -> int:
     design_provenance = compute_design_provenance(
         prompt_path=args.prompt, rubric_path=args.rubric, schema_path=args.schema,
         gold_path=args.gold, evaluation_gold_version=args.evaluation_gold_version,
+        judge_prompt_version=args.judge_prompt_version,
+        judge_rubric_version=args.judge_rubric_version,
     )
 
     if args.inspect:
@@ -260,10 +290,28 @@ def main() -> int:
         print("ABORT: --judge-model is required for a real run.", file=sys.stderr)
         return 2
 
-    client = HTTPJudgeClient(provider=args.judge_provider, model=args.judge_model)
+    # Fail fast on an invalid model/reasoning combination BEFORE the loop --
+    # a single clear top-level error instead of the same failure repeated
+    # per subject, and (per evaluate_subject's own contract) before any HTTP
+    # request is made either way.
+    try:
+        think_resolution = resolve_think_config(
+            args.judge_provider, args.judge_model, args.judge_think
+        )
+    except ValueError as exc:
+        print(f"ABORT: invalid Judge reasoning configuration: {exc}", file=sys.stderr)
+        return 2
+    print(f"judge_think: requested={think_resolution.requested!r} "
+          f"effective={think_resolution.effective!r} "
+          f"(ollama 'think' value={think_resolution.ollama_think_value!r})")
+
+    client = HTTPJudgeClient(
+        provider=args.judge_provider, model=args.judge_model, endpoint=args.judge_endpoint,
+    )
+    print(f"judge_endpoint: {client.endpoint!r}")
     model_config = ModelConfig(
         judge_provider=args.judge_provider, judge_model=args.judge_model,
-        temperature=args.temperature, timeout=args.timeout,
+        temperature=args.temperature, judge_think=args.judge_think, timeout=args.timeout,
     )
 
     results = []
@@ -285,9 +333,16 @@ def main() -> int:
         "timestamp": timestamp,
         "source_experiment_file": str(args.experiment_result),
         "evaluation_gold_version": args.evaluation_gold_version,
+        "judge_prompt_version": args.judge_prompt_version,
+        "judge_prompt_path": str(args.prompt),
+        "judge_rubric_version": args.judge_rubric_version,
+        "judge_rubric_path": str(args.rubric),
         "judge_provider": args.judge_provider,
         "judge_model": args.judge_model,
-        "temperature": args.temperature,
+        "judge_endpoint": client.endpoint,
+        "judge_temperature_requested": args.temperature,
+        "judge_think_requested": think_resolution.requested,
+        "judge_think_effective": think_resolution.effective,
         "results": [dataclasses.asdict(r) for r in results],
     }
     out_path.write_text(json.dumps(payload, indent=2))

@@ -8,7 +8,9 @@ from __future__ import annotations
 import dataclasses
 import json
 
+import jsonschema
 import pytest
+import requests
 
 from heinzy.eval.citation_resolution import (
     AMBIGUOUS,
@@ -23,11 +25,19 @@ from heinzy.eval.experiment import RetrievalChunkSnapshot
 from heinzy.eval.judge import (
     ARM_CONTROL,
     ARM_TREATMENT,
+    DEFAULT_OLLAMA_ENDPOINT,
     EXECUTION_ERROR,
     EXECUTION_SUCCESS,
     PARSE_ERROR,
     SCHEMA_ERROR,
+    THINK_AUTO,
+    THINK_HIGH,
+    THINK_LOW,
+    THINK_MEDIUM,
+    THINK_OFF,
+    THINK_ON,
     EvaluationSubject,
+    HTTPJudgeClient,
     JudgeCallResult,
     JudgeInputError,
     JudgePromptVariants,
@@ -36,6 +46,7 @@ from heinzy.eval.judge import (
     assert_unique_flattened,
     build_evaluation_subject,
     build_gold_index,
+    build_provider_schema,
     compare_control_sources,
     compute_design_provenance,
     evaluate_subject,
@@ -47,6 +58,8 @@ from heinzy.eval.judge import (
     load_output_schema,
     parse_judge_output,
     render_judge_request,
+    resolve_ollama_endpoint,
+    resolve_think_config,
     sha256_file,
     sha256_text,
     validate_full_coverage,
@@ -69,15 +82,23 @@ class FakeJudgeClient:
     def __init__(self, responses: list[str | Exception]) -> None:
         self._responses = list(responses)
         self.calls: list[tuple[str, str]] = []
+        self.think_values: list[object] = []
+        self.response_schemas: list[dict | None] = []
 
-    def run(self, system_prompt, user_prompt, *, temperature, timeout=None):
+    def run(
+        self, system_prompt, user_prompt, *, temperature, think_value=None,
+        response_schema=None, timeout=None,
+    ):
         self.calls.append((system_prompt, user_prompt))
+        self.think_values.append(think_value)
+        self.response_schemas.append(response_schema)
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
         return JudgeCallResult(
             raw_text=item, input_tokens=10, output_tokens=5, total_tokens=15,
             model_call_made=True, latency_seconds=0.001, model_tag="fake-judge",
+            thinking_trace_present=False,
         )
 
 
@@ -832,10 +853,675 @@ def test_result_record_rejects_unknown_execution_status():
             judge_output_schema_version="v1", judge_output_schema_fingerprint="f",
             evaluation_gold_version="v1.2", evaluation_gold_fingerprint="g",
             rendered_judge_input_fingerprint="h",
-            judge_provider="fake", judge_model="fake", temperature=0.0, timeout_seconds=None,
+            judge_provider="fake", judge_model="fake",
+            judge_temperature_requested=0.0, judge_temperature_effective=0.0,
+            judge_think_requested="auto", judge_think_effective=None,
+            timeout_seconds=None,
             timestamp="2026-01-01T00:00:00Z", latency_ms=1.0,
             usage_input_tokens=1, usage_output_tokens=1, usage_total_tokens=2,
-            usage_model_call_made=True, citation_resolutions=(),
+            usage_model_call_made=True, thinking_trace_present=False,
+            citation_resolutions=(),
             execution_status="NOT_A_REAL_STATUS", raw_judge_output=None,
             parsed_judge_output=None, error_type=None, error_message=None,
         )
+
+
+# =========================================================================== #
+# Ollama Judge-client configuration fixes: endpoint resolution, model-aware
+# thinking/reasoning, temperature independence, final-content-only parsing.
+# All HTTP calls below are mocked (requests.post is monkeypatched) -- ZERO
+# real Judge/LLM calls are made anywhere in this test module.
+# =========================================================================== #
+class _FakeOllamaResponse:
+    def __init__(self, message: dict, status_code: int = 200) -> None:
+        self._message = message
+        self.status_code = status_code
+        self.text = json.dumps({"message": message})
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def json(self) -> dict:
+        return {"message": self._message}
+
+
+@pytest.fixture
+def stub_ollama_post(monkeypatch):
+    """Replace requests.post with a fake that returns a scripted Ollama
+    /api/chat-shaped response and records every call's url/payload."""
+
+    def _install(content: str = "{}", thinking: str | None = None, status_code: int = 200):
+        calls: list[dict] = []
+        message = {"content": content}
+        if thinking is not None:
+            message["thinking"] = thinking
+
+        def fake_post(url, json=None, timeout=None, **kwargs):
+            calls.append({"url": url, "payload": json, "timeout": timeout})
+            return _FakeOllamaResponse(message, status_code=status_code)
+
+        monkeypatch.setattr(requests, "post", fake_post)
+        return calls
+
+    return _install
+
+
+@pytest.fixture(autouse=True)
+def _clear_ollama_host_env(monkeypatch):
+    """Keep every test's endpoint resolution deterministic regardless of the
+    machine's real environment."""
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+
+
+# --------------------------------------------------------------------------- #
+# 1-5: Ollama endpoint resolution
+# --------------------------------------------------------------------------- #
+def test_ollama_default_endpoint_is_localhost():
+    assert resolve_ollama_endpoint(None) == "http://127.0.0.1:11434"
+    assert resolve_ollama_endpoint(None) == DEFAULT_OLLAMA_ENDPOINT
+
+
+def test_ollama_host_env_overrides_default(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "http://ollama-host:11500")
+    assert resolve_ollama_endpoint(None) == "http://ollama-host:11500"
+
+
+def test_explicit_endpoint_overrides_ollama_host_env(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "http://ollama-host:11500")
+    assert resolve_ollama_endpoint("http://explicit-host:9999") == "http://explicit-host:9999"
+
+
+def test_trailing_slash_is_normalized():
+    assert resolve_ollama_endpoint("http://explicit-host:9999/") == "http://explicit-host:9999"
+    assert resolve_ollama_endpoint(None) == DEFAULT_OLLAMA_ENDPOINT  # never a trailing slash either
+
+
+def test_ollama_request_url_never_becomes_bare_api_chat(stub_ollama_post):
+    calls = stub_ollama_post(content='{"ok": true}')
+    client = HTTPJudgeClient(provider="ollama", model="qwen3.6:27b")  # no endpoint given
+    assert client.endpoint == "http://127.0.0.1:11434"
+    client.run("sys", "usr", temperature=0.0, think_value=True)
+    assert calls[0]["url"] == "http://127.0.0.1:11434/api/chat"
+    assert not calls[0]["url"].startswith("/api/chat")
+
+
+def test_azure_provider_never_gets_ollama_default_endpoint():
+    client = HTTPJudgeClient(provider="azure_openai", model="gpt-4", endpoint=None)
+    assert client.endpoint == ""  # unrelated to OLLAMA_HOST/127.0.0.1, unchanged existing contract
+    assert client.endpoint != DEFAULT_OLLAMA_ENDPOINT
+
+
+# --------------------------------------------------------------------------- #
+# 6-12: model-aware thinking/reasoning resolution
+# --------------------------------------------------------------------------- #
+def test_qwen_auto_resolves_to_think_true():
+    res = resolve_think_config("ollama", "qwen3.6:27b", THINK_AUTO)
+    assert res.effective == THINK_ON
+    assert res.ollama_think_value is True
+
+
+def test_qwen_on_resolves_to_think_true():
+    res = resolve_think_config("ollama", "qwen3.6:27b", THINK_ON)
+    assert res.ollama_think_value is True
+
+
+def test_qwen_off_resolves_to_think_false():
+    res = resolve_think_config("ollama", "qwen3.6:27b", THINK_OFF)
+    assert res.ollama_think_value is False
+
+
+def test_gpt_oss_auto_resolves_to_think_medium():
+    res = resolve_think_config("ollama", "gpt-oss:20b", THINK_AUTO)
+    assert res.effective == THINK_MEDIUM
+    assert res.ollama_think_value == "medium"
+
+
+def test_gpt_oss_medium_resolves_to_think_medium():
+    res = resolve_think_config("ollama", "gpt-oss:20b", THINK_MEDIUM)
+    assert res.ollama_think_value == "medium"
+
+
+def test_gpt_oss_low_and_high_map_correctly():
+    assert resolve_think_config("ollama", "gpt-oss:20b", THINK_LOW).ollama_think_value == "low"
+    assert resolve_think_config("ollama", "gpt-oss:20b", THINK_HIGH).ollama_think_value == "high"
+
+
+def test_gpt_oss_is_never_silently_sent_think_false():
+    """Do NOT automatically send think=false to GPT-OSS: 'off' is not in its
+    supported set, so requesting it must fail loudly, not silently no-op."""
+    with pytest.raises(ValueError, match="does not support"):
+        resolve_think_config("ollama", "gpt-oss:20b", THINK_OFF)
+
+
+def test_non_gpt_oss_model_rejects_low_medium_high():
+    with pytest.raises(ValueError, match="does not support"):
+        resolve_think_config("ollama", "qwen3.6:27b", THINK_LOW)
+
+
+def test_unregistered_model_family_fails_before_any_http_call(stub_ollama_post):
+    calls = stub_ollama_post(content="{}")
+    with pytest.raises(ValueError, match="no reasoning profile registered"):
+        resolve_think_config("ollama", "mystery-model:1b", THINK_AUTO)
+    assert calls == []  # never reached the HTTP layer
+
+
+def test_invalid_model_reasoning_combo_fails_before_evaluate_subject_calls_client(
+    prompt_variants, schema_doc
+):
+    """Invalid combos must fail BEFORE the HTTP request -- proven here at the
+    evaluate_subject() level: the FakeJudgeClient must record ZERO calls."""
+    row = _row(id="q001")
+    flat = flatten_experiment_report(_report(question_id="q001"), "src.json")[0]
+    subject = build_evaluation_subject(flat, row)
+    bad_config = ModelConfig(
+        judge_provider="ollama", judge_model="gpt-oss:20b", temperature=0.0, judge_think=THINK_OFF,
+    )
+    client = FakeJudgeClient([_good_answerable_output()])
+    with pytest.raises(ValueError, match="does not support"):
+        evaluate_subject(
+            subject, prompt_variants, client, model_config=bad_config,
+            design_provenance=_design_provenance(), schema_doc=schema_doc,
+            source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+        )
+    assert client.calls == []
+
+
+# --------------------------------------------------------------------------- #
+# 13-17: temperature independence
+# --------------------------------------------------------------------------- #
+def test_default_judge_temperature_is_zero():
+    assert ModelConfig(judge_provider="ollama", judge_model="qwen3.6:27b").temperature == 0.0
+
+
+def test_explicit_judge_temperature_is_preserved():
+    cfg = ModelConfig(judge_provider="ollama", judge_model="qwen3.6:27b", temperature=0.7)
+    assert cfg.temperature == 0.7
+
+
+def test_auto_reasoning_selection_never_changes_temperature(prompt_variants, schema_doc):
+    row = _row(id="q001")
+    flat = flatten_experiment_report(_report(question_id="q001"), "src.json")[0]
+    subject = build_evaluation_subject(flat, row)
+    for think_request in (THINK_AUTO, THINK_ON, THINK_OFF):
+        cfg = ModelConfig(
+            judge_provider="ollama", judge_model="qwen3.6:27b",
+            temperature=0.33, judge_think=think_request,
+        )
+        client = FakeJudgeClient([_good_answerable_output()])
+        result = evaluate_subject(
+            subject, prompt_variants, client, model_config=cfg,
+            design_provenance=_design_provenance(), schema_doc=schema_doc,
+            source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+        )
+        assert result.judge_temperature_requested == 0.33
+        assert result.judge_temperature_effective == 0.33
+
+
+def test_outgoing_qwen_request_includes_temperature_and_think_true(stub_ollama_post):
+    calls = stub_ollama_post(content=_good_answerable_output())
+    client = HTTPJudgeClient(provider="ollama", model="qwen3.6:27b")
+    think = resolve_think_config("ollama", "qwen3.6:27b", THINK_AUTO)
+    client.run("sys", "usr", temperature=0.0, think_value=think.ollama_think_value)
+    payload = calls[0]["payload"]
+    assert payload["options"]["temperature"] == 0.0
+    assert payload["think"] is True
+
+
+def test_outgoing_gpt_oss_request_includes_temperature_and_think_medium(stub_ollama_post):
+    calls = stub_ollama_post(content=_good_answerable_output())
+    client = HTTPJudgeClient(provider="ollama", model="gpt-oss:20b")
+    think = resolve_think_config("ollama", "gpt-oss:20b", THINK_AUTO)
+    client.run("sys", "usr", temperature=0.0, think_value=think.ollama_think_value)
+    payload = calls[0]["payload"]
+    assert payload["options"]["temperature"] == 0.0
+    assert payload["think"] == "medium"
+
+
+# --------------------------------------------------------------------------- #
+# 18-20: final content vs thinking trace; provenance
+# --------------------------------------------------------------------------- #
+def test_thinking_trace_is_not_passed_to_the_json_parser(stub_ollama_post):
+    good_json = _good_answerable_output()
+    calls = stub_ollama_post(
+        content=good_json,
+        thinking="I am reasoning about this out loud and not emitting JSON here.",
+    )
+    client = HTTPJudgeClient(provider="ollama", model="qwen3.6:27b")
+    result = client.run("sys", "usr", temperature=0.0, think_value=True)
+    assert result.raw_text == good_json
+    assert "reasoning about this out loud" not in result.raw_text
+    parsed, err = parse_judge_output(result.raw_text)
+    assert err is None
+    assert parsed["task_completion"]["label"] == "PASS"
+    assert result.thinking_trace_present is True
+    assert calls  # sanity: the stub was actually hit
+
+
+def test_final_message_content_preserved_as_raw_judge_output_end_to_end(
+    prompt_variants, schema_doc, stub_ollama_post
+):
+    good_json = _good_answerable_output()
+    stub_ollama_post(content=good_json, thinking="hidden chain of thought")
+    row = _row(id="q001")
+    flat = flatten_experiment_report(_report(question_id="q001"), "src.json")[0]
+    subject = build_evaluation_subject(flat, row)
+    client = HTTPJudgeClient(provider="ollama", model="qwen3.6:27b")
+    cfg = ModelConfig(judge_provider="ollama", judge_model="qwen3.6:27b", temperature=0.0)
+    result = evaluate_subject(
+        subject, prompt_variants, client, model_config=cfg,
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    assert result.execution_status == EXECUTION_SUCCESS
+    assert result.raw_judge_output == good_json
+    assert "hidden chain of thought" not in result.raw_judge_output
+    assert result.thinking_trace_present is True
+
+
+def test_requested_and_effective_temperature_and_thinking_are_recorded(
+    prompt_variants, schema_doc, stub_ollama_post
+):
+    stub_ollama_post(content=_good_answerable_output())
+    row = _row(id="q001")
+    flat = flatten_experiment_report(_report(question_id="q001"), "src.json")[0]
+    subject = build_evaluation_subject(flat, row)
+    client = HTTPJudgeClient(provider="ollama", model="gpt-oss:20b")
+    cfg = ModelConfig(
+        judge_provider="ollama", judge_model="gpt-oss:20b",
+        temperature=0.0, judge_think=THINK_AUTO,
+    )
+    result = evaluate_subject(
+        subject, prompt_variants, client, model_config=cfg,
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    assert result.judge_temperature_requested == 0.0
+    assert result.judge_temperature_effective == 0.0
+    assert result.judge_think_requested == THINK_AUTO
+    assert result.judge_think_effective == THINK_MEDIUM
+
+
+def test_execution_error_never_reports_a_thinking_trace():
+    """No call succeeded -> thinking_trace_present must be None, not False
+    (False would falsely claim we know there was no trace)."""
+    row = _row(id="q001")
+    flat = flatten_experiment_report(_report(question_id="q001"), "src.json")[0]
+    # local import to avoid polluting module namespace with a test-only symbol
+    from heinzy.eval.judge import build_evaluation_subject as _build
+
+    subject = _build(flat, row)
+    prompt_variants = load_judge_prompt_variants("eval/judge/judge_prompt_v1.txt")
+    schema_doc = load_output_schema("eval/judge/judge_output_schema_v1.json")
+    client = FakeJudgeClient([RuntimeError("simulated network failure")])
+    result = evaluate_subject(
+        subject, prompt_variants, client, model_config=_model_config(),
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    assert result.execution_status == EXECUTION_ERROR
+    assert result.thinking_trace_present is None
+
+
+# =========================================================================== #
+# Structured-output patch: Ollama `format` uses the already-frozen Judge
+# schema as a generation constraint, selected the same way (answerable flag
+# only) and via the same helper as local post-hoc validation. All HTTP is
+# mocked (requests.post monkeypatched) -- ZERO real Judge/model calls.
+# =========================================================================== #
+def _answerable_flat_and_row():
+    row = _row(id="q001")
+    flat = flatten_experiment_report(_report(question_id="q001"), "src.json")[0]
+    return flat, row
+
+
+def _unanswerable_flat_and_row():
+    row = _row(id="q005", answerable=False, unanswerable_reason="wrong_scope")
+    flat = flatten_experiment_report(
+        _report(question_id="q005", control_text="I can't answer that."), "src.json"
+    )[0]
+    return flat, row
+
+
+# --------------------------------------------------------------------------- #
+# 1-2: answerable/unanswerable rows send the corresponding provider schema
+# --------------------------------------------------------------------------- #
+def test_answerable_row_sends_format_with_answerable_schema(
+    prompt_variants, schema_doc
+):
+    flat, row = _answerable_flat_and_row()
+    subject = build_evaluation_subject(flat, row)
+    client = FakeJudgeClient([_good_answerable_output()])
+    evaluate_subject(
+        subject, prompt_variants, client, model_config=_model_config(),
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    sent_schema = client.response_schemas[0]
+    assert sent_schema is not None
+    assert "task_completion" in sent_schema["properties"]
+    assert "correct_abstention" not in sent_schema["properties"]
+
+
+def test_unanswerable_row_sends_format_with_unanswerable_schema(
+    prompt_variants, schema_doc
+):
+    flat, row = _unanswerable_flat_and_row()
+    subject = build_evaluation_subject(flat, row)
+    unanswerable_output = json.dumps(
+        {
+            "correct_abstention": {"label": "PASS", "reason": "ok"},
+            "unsupported_answer": {"label": "PASS", "unsupported_claims": [], "reason": "ok"},
+        }
+    )
+    client = FakeJudgeClient([unanswerable_output])
+    evaluate_subject(
+        subject, prompt_variants, client, model_config=_model_config(),
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    sent_schema = client.response_schemas[0]
+    assert sent_schema is not None
+    assert "correct_abstention" in sent_schema["properties"]
+    assert "task_completion" not in sent_schema["properties"]
+
+
+# --------------------------------------------------------------------------- #
+# 3-6: the provider schema is self-contained and unweakened
+# --------------------------------------------------------------------------- #
+def test_provider_schema_includes_defs(schema_doc):
+    answerable = build_provider_schema(schema_doc, answerable=True)
+    unanswerable = build_provider_schema(schema_doc, answerable=False)
+    assert "$defs" in answerable
+    assert "$defs" in unanswerable
+    assert answerable["$defs"] == schema_doc["$defs"]
+    assert unanswerable["$defs"] == schema_doc["$defs"]
+
+
+def test_internal_defs_refs_resolve_within_self_contained_schema(schema_doc):
+    """A schema with an unresolved '#/$defs/...' ref fails check_schema-style
+    validator construction the moment it's actually used to validate
+    something -- prove the self-contained schema resolves by validating a
+    real payload against it directly (not via schema_doc)."""
+    answerable = build_provider_schema(schema_doc, answerable=True)
+    validator_cls = jsonschema.validators.validator_for(answerable)
+    validator_cls.check_schema(answerable)
+    validator = validator_cls(answerable)
+    good = json.loads(_good_answerable_output())
+    errors = list(validator.iter_errors(good))
+    assert errors == []
+
+    unanswerable = build_provider_schema(schema_doc, answerable=False)
+    validator_cls_u = jsonschema.validators.validator_for(unanswerable)
+    validator_cls_u.check_schema(unanswerable)
+    validator_u = validator_cls_u(unanswerable)
+    good_unanswerable = {
+        "correct_abstention": {"label": "PASS", "reason": "ok"},
+        "unsupported_answer": {"label": "PASS", "unsupported_claims": [], "reason": "ok"},
+    }
+    assert list(validator_u.iter_errors(good_unanswerable)) == []
+
+
+def test_required_nested_object_structure_is_unchanged(schema_doc):
+    """The flattened shape Qwen actually produced
+    ({"task_completion": "PASS", "reasons_task_completion": "..."}) must
+    still be exactly what the frozen schema (and therefore the provider
+    schema) rejects -- proving the patch did not loosen anything to
+    accommodate that output."""
+    answerable = build_provider_schema(schema_doc, answerable=True)
+    assert answerable["properties"]["task_completion"]["type"] == "object"
+    assert answerable["properties"]["task_completion"]["required"] == ["label", "reason"]
+
+    validator_cls = jsonschema.validators.validator_for(answerable)
+    validator = validator_cls(answerable)
+    flattened_qwen_shape = {
+        "task_completion": "PASS",
+        "correctness": "PASS",
+        "completeness": "PASS",
+        "faithfulness": "PASS",
+        "citation_support": "PASS",
+        "reasons_task_completion": "...",
+    }
+    errors = list(validator.iter_errors(flattened_qwen_shape))
+    assert errors, "flattened non-nested output must still fail the frozen schema"
+
+
+def test_additional_properties_false_is_preserved(schema_doc):
+    answerable = build_provider_schema(schema_doc, answerable=True)
+    assert answerable["additionalProperties"] is False
+    unanswerable = build_provider_schema(schema_doc, answerable=False)
+    assert unanswerable["additionalProperties"] is False
+
+    validator_cls = jsonschema.validators.validator_for(answerable)
+    validator = validator_cls(answerable)
+    good = json.loads(_good_answerable_output())
+    good["final_gas"] = "PASS"  # extra/forbidden top-level field
+    errors = list(validator.iter_errors(good))
+    assert errors, "additionalProperties=false must still reject an extra field"
+
+
+def test_provider_schema_deepcopy_does_not_mutate_loaded_schema_doc(schema_doc):
+    before = json.dumps(schema_doc, sort_keys=True)
+    provider_schema = build_provider_schema(schema_doc, answerable=True)
+    provider_schema["properties"]["task_completion"]["type"] = "string"  # mutate the copy
+    provider_schema["$defs"]["reason"]["maxLength"] = 1  # mutate nested $defs copy too
+    after = json.dumps(schema_doc, sort_keys=True)
+    assert before == after
+
+
+# --------------------------------------------------------------------------- #
+# 7-8: outgoing Qwen/GPT-OSS requests include both think AND format
+# --------------------------------------------------------------------------- #
+def test_outgoing_qwen_request_includes_think_true_and_answerable_format(
+    stub_ollama_post, schema_doc
+):
+    calls = stub_ollama_post(content=_good_answerable_output())
+    client = HTTPJudgeClient(provider="ollama", model="qwen3.6:27b")
+    think = resolve_think_config("ollama", "qwen3.6:27b", THINK_AUTO)
+    schema = build_provider_schema(schema_doc, answerable=True)
+    client.run(
+        "sys", "usr", temperature=0.0, think_value=think.ollama_think_value,
+        response_schema=schema,
+    )
+    payload = calls[0]["payload"]
+    assert payload["think"] is True
+    assert payload["format"] == schema
+    assert payload["format"]["properties"]["task_completion"]["type"] == "object"
+
+
+def test_outgoing_gpt_oss_request_includes_think_medium_and_unanswerable_format(
+    stub_ollama_post, schema_doc
+):
+    calls = stub_ollama_post(
+        content=json.dumps(
+            {
+                "correct_abstention": {"label": "PASS", "reason": "ok"},
+                "unsupported_answer": {"label": "PASS", "unsupported_claims": [], "reason": "ok"},
+            }
+        )
+    )
+    client = HTTPJudgeClient(provider="ollama", model="gpt-oss:20b")
+    think = resolve_think_config("ollama", "gpt-oss:20b", THINK_AUTO)
+    schema = build_provider_schema(schema_doc, answerable=False)
+    client.run(
+        "sys", "usr", temperature=0.0, think_value=think.ollama_think_value,
+        response_schema=schema,
+    )
+    payload = calls[0]["payload"]
+    assert payload["think"] == "medium"
+    assert payload["format"] == schema
+    assert "correct_abstention" in payload["format"]["properties"]
+
+
+def test_azure_provider_never_receives_ollama_format_field():
+    """Isolation: response_schema must never leak into the Azure payload."""
+    captured = {}
+
+    class _FakeAzureResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+    def fake_post(url, json=None, headers=None, timeout=None, **kwargs):
+        captured["payload"] = json
+        return _FakeAzureResponse()
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(requests, "post", fake_post):
+        client = HTTPJudgeClient(
+            provider="azure_openai", model="gpt-4", endpoint="https://example.openai.azure.com",
+            azure_api_key="k",
+        )
+        client.run(
+            "sys", "usr", temperature=0.0,
+            response_schema={"type": "object", "properties": {}},
+        )
+    assert "format" not in captured["payload"]
+
+
+# --------------------------------------------------------------------------- #
+# 9-11: temperature independence, content-only parsing, thinking exclusion
+# (structured-output specific regressions -- broader coverage already exists
+# from the prior patch's test suite)
+# --------------------------------------------------------------------------- #
+def test_temperature_independent_of_format_and_think(
+    prompt_variants, schema_doc, stub_ollama_post
+):
+    stub_ollama_post(content=_good_answerable_output())
+    flat, row = _answerable_flat_and_row()
+    subject = build_evaluation_subject(flat, row)
+    client = HTTPJudgeClient(provider="ollama", model="qwen3.6:27b")
+    cfg = ModelConfig(
+        judge_provider="ollama", judge_model="qwen3.6:27b", temperature=0.42, judge_think=THINK_ON,
+    )
+    result = evaluate_subject(
+        subject, prompt_variants, client, model_config=cfg,
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    assert result.judge_temperature_requested == 0.42
+    assert result.judge_temperature_effective == 0.42
+
+
+def test_message_content_remains_only_text_passed_to_json_parsing_with_format(
+    stub_ollama_post, schema_doc
+):
+    good_json = _good_answerable_output()
+    calls = stub_ollama_post(content=good_json, thinking="internal reasoning trace")
+    client = HTTPJudgeClient(provider="ollama", model="qwen3.6:27b")
+    schema = build_provider_schema(schema_doc, answerable=True)
+    result = client.run(
+        "sys", "usr", temperature=0.0, think_value=True, response_schema=schema,
+    )
+    assert result.raw_text == good_json
+    assert "internal reasoning trace" not in result.raw_text
+    assert result.thinking_trace_present is True
+    assert calls[0]["payload"]["format"] == schema  # format was still sent alongside thinking
+
+
+# --------------------------------------------------------------------------- #
+# 12: malformed/nonconforming output is still caught locally, format or not
+# --------------------------------------------------------------------------- #
+def test_provider_nonconforming_output_still_caught_by_local_schema_validator(
+    prompt_variants, schema_doc
+):
+    """The exact bug this patch targets: even with `format` sent, a
+    non-compliant provider (or one that ignores/imperfectly honors it) must
+    still be caught downstream -- structured output is an ADDITIONAL
+    constraint, never a replacement for local validation."""
+    flat, row = _answerable_flat_and_row()
+    subject = build_evaluation_subject(flat, row)
+    flattened_qwen_shape = json.dumps(
+        {
+            "task_completion": "PASS",
+            "correctness": "PASS",
+            "completeness": "PASS",
+            "faithfulness": "PASS",
+            "citation_support": "PASS",
+            "reasons_task_completion": "the response substantively answers the question",
+        }
+    )
+    client = FakeJudgeClient([flattened_qwen_shape])
+    result = evaluate_subject(
+        subject, prompt_variants, client, model_config=_model_config(),
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    assert result.execution_status == SCHEMA_ERROR
+    assert result.raw_judge_output == flattened_qwen_shape
+    # the request still carried the answerable-schema `format` constraint
+    assert client.response_schemas[0]["properties"]["task_completion"]["type"] == "object"
+
+
+def test_malformed_json_still_caught_even_with_format_sent(prompt_variants, schema_doc):
+    flat, row = _answerable_flat_and_row()
+    subject = build_evaluation_subject(flat, row)
+    client = FakeJudgeClient(["not valid json even with format constrained"])
+    result = evaluate_subject(
+        subject, prompt_variants, client, model_config=_model_config(),
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    assert result.execution_status == PARSE_ERROR
+    assert client.response_schemas[0] is not None  # format was still requested
+
+
+# --------------------------------------------------------------------------- #
+# 13: HTTPJudgeClient never receives gold/human-label data -- only the
+# rendered prompt strings and the selected response schema
+# --------------------------------------------------------------------------- #
+def test_http_judge_client_receives_no_gold_or_human_label_data(
+    prompt_variants, schema_doc
+):
+    import inspect
+
+    params = list(inspect.signature(HTTPJudgeClient.run).parameters)
+    forbidden = (
+        "gold_row", "gold_answer", "gold_claims", "row", "human_label",
+        "answerable",  # answerability must be pre-baked into response_schema,
+                       # never passed raw so the client could "infer" from it
+    )
+    for name in forbidden:
+        assert name not in params
+    assert "response_schema" in params
+
+    # end-to-end: FakeJudgeClient (standing in for HTTPJudgeClient) only
+    # ever receives (system_prompt, user_prompt, temperature, think_value,
+    # response_schema, timeout) -- confirmed by construction of run()'s
+    # call site in evaluate_subject, and by the rendered content itself
+    # carrying no gold_claims/gold_answer field names as JSON keys (they
+    # appear only as rendered natural-language text, which is the
+    # documented, permitted GOLD REFERENCE MATERIAL block for answerable
+    # rows -- never as a separate machine-readable parameter to the client).
+    distinctive_answer = "UNIQUE_GOLD_ANSWER_MARKER_2f6a9"
+    distinctive_claim = "UNIQUE_GOLD_CLAIM_MARKER_9b31c"
+    row = _row(
+        id="q001", gold_answer=distinctive_answer,
+        claims=[
+            GoldClaim(
+                claim_id="q001-c01", claim=distinctive_claim,
+                supporting_evidence=[SupportingEvidence(section_id="1", evidence_quote="quote")],
+            )
+        ],
+    )
+    flat = flatten_experiment_report(_report(question_id="q001"), "src.json")[0]
+    subject = build_evaluation_subject(flat, row)
+    client = FakeJudgeClient([_good_answerable_output()])
+    evaluate_subject(
+        subject, prompt_variants, client, model_config=_model_config(),
+        design_provenance=_design_provenance(), schema_doc=schema_doc,
+        source_experiment_file="src.json", source_record_index=0, arm=ARM_CONTROL,
+    )
+    schema_sent = client.response_schemas[0]
+    # the schema is pure JSON Schema structure/documentation -- it may
+    # mention "gold_claims" only as part of its own field descriptions
+    # (e.g. explaining what missing_claims means), never as actual gold
+    # VALUES from this specific row.
+    schema_text = json.dumps(schema_sent)
+    assert distinctive_answer not in schema_text
+    assert distinctive_claim not in schema_text
