@@ -660,7 +660,7 @@ def compute_design_provenance(
     """judge_prompt_version/judge_rubric_version default to the module's own
     "v1" constants for backward compatibility, but MUST be overridden by the
     caller whenever prompt_path/rubric_path point at a different versioned
-    candidate (e.g. judge_prompt_v1.1.txt) -- otherwise the recorded
+    candidate (e.g. judge_prompt_v1.2.txt) -- otherwise the recorded
     provenance would silently misrepresent which prompt/rubric text actually
     produced a result, defeating the point of versioning a new candidate at
     all. The fingerprint is always computed from the actual file content

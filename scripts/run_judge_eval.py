@@ -145,8 +145,8 @@ def main() -> int:
     ap.add_argument("--evaluation-gold-version", default="v1.2")
     ap.add_argument("--judge-prompt-version", default="v1",
                      help="version label recorded in provenance for --prompt's content; "
-                          "MUST match what --prompt actually points to (e.g. pass 'v1.1' "
-                          "together with --prompt eval/judge/judge_prompt_v1.1.txt) -- this "
+                          "MUST match what --prompt actually points to (e.g. pass 'v1.2' "
+                          "together with --prompt eval/judge/judge_prompt_v1.2.txt) -- this "
                           "label is never inferred from the file path")
     ap.add_argument("--judge-rubric-version", default="v1",
                      help="version label recorded in provenance for --rubric's content; "
